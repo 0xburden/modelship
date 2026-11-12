@@ -84,6 +84,25 @@ Retained deployment names:
 
 Choose the desired service rather than blindly starting every test worker. The local artifact directory includes `final-state.json` with the stopped-state/PyTorch checks.
 
+## Recipe-branch Gemma 4 validation on a fresh A6000
+
+This work is on `feat/model-recipes`, **not the published v0.2.0-alpha.1**. New development CLI: `v0.3.0-recipes-dev.3`, installed separately on the test server as `~/.local/bin/modelship-dev`.
+
+- Same Ubuntu 22.04.5 / Python 3.12.13 / A6000 48 GiB / driver 610.43.02 / host PyTorch 2.12.1+cu130 environment family as the baseline.
+- `google/gemma-4-E4B-it` pinned to `4ecc2ba63bcac23ba4a767fc87025b1450f84c9c`, ~15.99 GB of checkpoint artifacts. Full model loads in BF16; context 4096; text-only API; eager attention.
+- Isolated Transformers 5.22.2 / Hugging Face Hub 2.4.0 / safetensors 0.8.0 / accelerate 1.15.0 profile installed without replacing host PyTorch. Pre/post CUDA probes passed.
+- Initial untemplated completion output repeated text despite HTTP 200. This was treated as a quality failure, not a passing model test. The recipe now frames completion prompts as a user turn and disables thinking for bounded text responses. Legacy causal-model completion framing is unchanged.
+- Post-fix semantic completion: `The capital of France is **Paris**.` Chat: `Gemma is working.`
+- Nine live API checks passed, including model listing, completions/chat, unknown model 404, unsupported streaming/parameter/context errors 422, and simultaneous 200/503 busy handling. A separate image-message-content request returned 422, as required by the text-only scope.
+- Post-fix single request times: 4.680 s completion / 5.431 s chat. These are not throughput benchmarks.
+- Stop/start, cached loading, and schema-2 metadata/loader/dtype flags passed. The actual published alpha binary refuses schema-2 state, preventing accidental legacy loader/dtype fallback.
+- A newly created Qwen2.5-3B regression deployment passed the same API and Paris semantic checks while Gemma stayed healthy. Worker configuration confirms Qwen uses its legacy float16/causal/raw-completion profile and Gemma uses BF16/multimodal/templated-completion settings. No existing deployment was stopped to make room.
+- Listeners: `127.0.0.1:8000` (Qwen), `127.0.0.1:8003` (Gemma). No Thunder HTTP forwarding is configured. Combined post-request device memory was 21370 MiB used / 27770 MiB free; this is not a peak allocated-memory measurement.
+- Both demonstrations are retained running for comparison under names `qwen-regression` and `gemma4-e4b-test`. Use `modelship-dev` to manage them. The instance remains running/billable and was not resized by the agent.
+- Machine-readable reports are ignored under local `validation-artifacts/gemma4/templated/`, `validation-artifacts/qwen-regression/`, and remote `~/modelship-validation/`.
+
+All five newly requested repositories were also inspected at pinned revisions using the new host-independent CLI; large weights were downloaded only for the Gemma test and Qwen regression. Qwen3.8, Qwen Image 2.1, MOSS Image, WAN, and LoRA execution remain separate roadmap work. See `MODEL_SUPPORT.md` for size, licensing, custom-code, and video constraints.
+
 ## Thunder Docker blocker
 
 Provider Docker rejects `--gpus` / `--runtime=nvidia`; its documented GPU flag is `--device nvidia.com/gpu=all`.

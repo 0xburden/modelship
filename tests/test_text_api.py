@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import types
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -67,7 +68,7 @@ class OOM(Exception):
 
 
 sys.modules["torch"] = types.SimpleNamespace(
-    float16="fp16", inference_mode=nullcontext, OutOfMemoryError=OOM,
+    float16="fp16", bfloat16="bf16", inference_mode=nullcontext, OutOfMemoryError=OOM,
     manual_seed=lambda seed: None, cuda=types.SimpleNamespace(empty_cache=lambda: None),
 )
 sys.modules["transformers"] = types.SimpleNamespace(AutoModelForCausalLM=Network, AutoTokenizer=Tokenizer)
@@ -83,6 +84,9 @@ class NativeTextAPITests(unittest.TestCase):
         server.REVISION = "a" * 40
         server.RUN_ID = "b" * 32
         server.CONTEXT = 4096
+        server.RECIPE = ""
+        server.TEMPLATE_COMPLETIONS = False
+        server.DISABLE_THINKING = False
 
     def test_completion_and_pinned_loading(self):
         with TestClient(server.app) as client:
@@ -98,6 +102,27 @@ class NativeTextAPITests(unittest.TestCase):
         self.assertTrue(load["use_safetensors"])
         self.assertFalse(load["trust_remote_code"])
         self.assertEqual(load["attn_implementation"], "eager")
+
+    def test_gemma_multimodal_loader_is_text_only_and_thinking_disabled(self):
+        server.RECIPE = "gemma4-text"
+        server.TEMPLATE_COMPLETIONS = True
+        server.DISABLE_THINKING = True
+        with patch.object(sys.modules["transformers"], "AutoModelForMultimodalLM", Network, create=True):
+            with patch.dict("os.environ", {"MODEL_NATIVE_LOADER": "multimodal-lm", "MODEL_DTYPE": "bfloat16"}):
+                with TestClient(server.app) as client:
+                    response = client.post("/v1/chat/completions", json={"messages": [{"role": "user", "content": "Hi"}]})
+                    self.assertEqual(response.status_code, 200, response.text)
+                    completion = client.post("/v1/completions", json={"prompt": "Capital?"})
+                    self.assertEqual(completion.status_code, 200, completion.text)
+                    image_request = client.post("/v1/chat/completions", json={"messages": [{"role": "user", "content": [{"type": "image_url", "image_url": "https://example.com/x"}]}]})
+                    self.assertEqual(image_request.status_code, 422)
+        load = next(call[2] for call in CALLS if call[0] == "load")
+        self.assertEqual(load["dtype"], "bf16")
+        self.assertFalse(load["trust_remote_code"])
+        chat = next(call[2] for call in CALLS if call[0] == "chat")
+        self.assertFalse(chat["enable_thinking"])
+        templated_messages = [call[1] for call in CALLS if call[0] == "chat"]
+        self.assertIn([{"role": "user", "content": "Capital?"}], templated_messages)
 
     def test_chat(self):
         with TestClient(server.app) as client:

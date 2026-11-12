@@ -25,7 +25,13 @@ type TorchInfo struct {
 	File           string `json:"torch_file"`
 	CUDA           string `json:"cuda_version"`
 	GPU            string `json:"gpu"`
+	PythonVersion  string `json:"python_version,omitempty"`
 }
+
+// Schema 2 records recipe-specific execution. Older CLIs reject it rather
+// than silently starting a modern model with legacy loader/dtype defaults.
+const nativeSchemaVersion = 2
+
 type NativeConfig struct {
 	Schema int       `json:"schema"`
 	Plan   Plan      `json:"plan"`
@@ -111,7 +117,7 @@ func nativeConfig(name string) (NativeConfig, string, error) {
 	if err = readJSONFile(filepath.Join(dir, "config.json"), &cfg); err != nil {
 		return cfg, dir, fmt.Errorf("read native deployment %s: %w", name, err)
 	}
-	if cfg.Schema != 1 || cfg.Plan.Backend != "native" || cfg.Plan.Name != name || !commitPattern.MatchString(cfg.Plan.Revision) || cfg.Plan.Port < 1024 || cfg.Plan.Port > 65535 {
+	if (cfg.Schema != 1 && cfg.Schema != nativeSchemaVersion) || cfg.Plan.Backend != "native" || cfg.Plan.Name != name || !commitPattern.MatchString(cfg.Plan.Revision) || cfg.Plan.Port < 1024 || cfg.Plan.Port > 65535 {
 		return cfg, dir, fmt.Errorf("invalid native deployment metadata")
 	}
 	return cfg, dir, nil
@@ -128,7 +134,16 @@ func nativeLock(dir string) (func(), error) {
 	return func() { syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }, nil
 }
 func nativeEnv(p Plan, runID string) []string {
+	dtype, loader := p.DType, p.NativeLoader
+	if dtype == "" {
+		dtype = "float16"
+	}
+	if loader == "" {
+		loader = "causal-lm"
+	}
 	overrides := map[string]string{
+		"MODEL_DTYPE": dtype, "MODEL_NATIVE_LOADER": loader, "MODEL_RECIPE": p.RecipeID,
+		"MODEL_TEMPLATE_COMPLETIONS": strconv.FormatBool(p.TemplateCompletions), "MODEL_DISABLE_THINKING": strconv.FormatBool(p.DisableThinking),
 		"CUDA_VISIBLE_DEVICES": p.GPU.UUID, "MODEL_ID": p.Model, "MODEL_REVISION": p.Revision,
 		"MODEL_TASK": p.Task, "MODEL_PIPELINE": p.Pipeline, "MODEL_CONTEXT": strconv.Itoa(p.Context),
 		"MODEL_PORT": strconv.Itoa(p.Port), "MODEL_RUN_ID": runID, "PYTHONUNBUFFERED": "1",
@@ -199,13 +214,19 @@ func DeployNative(ctx context.Context, p Plan, wait time.Duration) error {
 		return err
 	}
 	defer unlock()
-	cfg := NativeConfig{Schema: 1, Plan: p}
+	cfg := NativeConfig{Schema: nativeSchemaVersion, Plan: p}
 	if err = writeJSONFile(filepath.Join(dir, "config.json"), cfg); err != nil {
 		return err
 	}
 	before, err := probeTorch(ctx, python, p)
 	if err != nil {
 		return err
+	}
+	if p.MinPython != "" {
+		var major, minor int
+		if _, err := fmt.Sscanf(p.MinPython, "%d.%d", &major, &minor); err != nil || !driverAtLeast(before.PythonVersion, major, minor) {
+			return fmt.Errorf("recipe %s requires Python >= %s; selected Python reports %q", p.RecipeID, p.MinPython, before.PythonVersion)
+		}
 	}
 	fmt.Printf("Native PyTorch: %s · CUDA %s · %s\n", before.Version, before.CUDA, before.GPU)
 	cfg.Torch = before
@@ -239,9 +260,9 @@ func DeployNative(ctx context.Context, p Plan, wait time.Duration) error {
 	if err = os.WriteFile(constraint, []byte("torch==="+before.PackageVersion+"\n"), 0600); err != nil {
 		return err
 	}
-	requirements := []string{"transformers==4.56.2", "huggingface-hub==0.36.0", "safetensors==0.6.2", "fastapi==0.116.1", "uvicorn==0.35.0", "pydantic==2.11.7"}
-	if p.Runtime == "diffusers" {
-		requirements = append(requirements, "diffusers==0.35.1", "accelerate==1.10.1", "pillow==11.3.0", "sentencepiece==0.2.1", "protobuf==6.32.1")
+	requirements, err := nativeRequirements(p)
+	if err != nil {
+		return err
 	}
 	requirementsPath := filepath.Join(dir, "requirements.txt")
 	if err = os.WriteFile(requirementsPath, []byte(strings.Join(requirements, "\n")+"\n"), 0600); err != nil {

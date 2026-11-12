@@ -16,6 +16,8 @@ import (
 const help = `modelship — NVIDIA model deployment (Linux amd64)
 
 Commands:
+  catalog [--json]                    List implemented, experimental, and planned recipes
+  inspect MODEL [--json]              Inspect metadata without a GPU or model download
   doctor                             Inspect NVIDIA GPUs and Docker
   setup                              Print prerequisite installation guidance
   plan MODEL [options]               Resolve weights and print a deployment plan
@@ -31,6 +33,7 @@ Plan/deploy options:
   --task auto|text-generation|text-to-image|image-to-image
   --revision main   --gpu 0   --context 4096   --port 8000
   --backend docker|native   --python python3 (native base with working PyTorch)
+  --experimental     Explicitly opt in to an experimental implemented recipe
   --name modelship  --allow-risk   --gpu-mode auto|nvidia|cdi (Docker)
   --json            Print machine-readable plan (plan only)
   --yes             Skip confirmation (deploy only)
@@ -55,6 +58,10 @@ func Run(args []string, version string) error {
 			return fmt.Errorf("internal native-run requires name and run ID")
 		}
 		return NativeExec(args[1], args[2])
+	case "catalog":
+		return catalogCommand(args[1:])
+	case "inspect":
+		return inspectCommand(ctx, args[1:])
 	case "version":
 		fmt.Println(version)
 		return nil
@@ -140,6 +147,7 @@ func planCommand(ctx context.Context, action string, args []string) error {
 	fs.IntVar(&o.Port, "port", 8000, "localhost port")
 	fs.StringVar(&o.Name, "name", "modelship", "container name")
 	fs.BoolVar(&o.AllowRisk, "allow-risk", false, "override VRAM heuristic only")
+	fs.BoolVar(&o.Experimental, "experimental", false, "opt in to experimental implemented recipes")
 	asJSON := fs.Bool("json", false, "machine-readable plan")
 	yes := fs.Bool("yes", false, "skip confirmation")
 	wait := fs.Duration("wait", 30*time.Minute, "readiness timeout")
@@ -228,6 +236,9 @@ func printPlan(p Plan) {
 		fmt.Printf("Context:     %d\n", p.Context)
 	}
 	fmt.Printf("Backend:     %s\n", p.Backend)
+	if p.RecipeID != "" {
+		fmt.Printf("Recipe:      %s (%s), %s\n", p.RecipeID, p.RecipeStatus, p.DType)
+	}
 	if p.Python != "" {
 		fmt.Printf("Base Python: %s\n", p.Python)
 	}

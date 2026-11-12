@@ -22,6 +22,7 @@ def main():
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--input", type=Path)
+    parser.add_argument("--expect-completion-substring", help="optional semantic check for the France completion, e.g. Paris")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True, mode=0o700)
     base = f"http://127.0.0.1:{args.port}"
@@ -53,6 +54,8 @@ def main():
         assert model in [entry["id"] for entry in models["data"]]
         completion = check("completion", "/v1/completions", {"model": model, "prompt": "The capital of France is", "max_tokens": 16, "temperature": 0})
         assert completion["choices"][0]["text"].strip()
+        if args.expect_completion_substring:
+            assert args.expect_completion_substring.lower() in completion["choices"][0]["text"].lower(), completion["choices"][0]["text"]
         chat = check("chat", "/v1/chat/completions", {"model": model, "messages": [{"role": "user", "content": "Explain what a GPU does in one short sentence."}], "max_tokens": 64, "temperature": 0})
         assert chat["choices"][0]["message"]["content"].strip()
         check("unknown-model", "/v1/completions", {"model": "missing/model", "prompt": "x"}, status=404)

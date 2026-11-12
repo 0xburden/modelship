@@ -11,52 +11,49 @@ const VLLMImage = "vllm/vllm-openai:v0.10.2"
 const ImageRuntime = "modelship-diffusers:0.1.0"
 
 type Options struct {
-	Backend   string
-	Python    string
-	Task      string
-	GPU       int
-	GPUMode   string
-	Context   int
-	Port      int
-	Name      string
-	Revision  string
-	AllowRisk bool
+	Backend      string
+	Python       string
+	Task         string
+	GPU          int
+	GPUMode      string
+	Context      int
+	Port         int
+	Name         string
+	Revision     string
+	AllowRisk    bool
+	Experimental bool
 }
 type Plan struct {
-	Schema            int      `json:"schema"`
-	Backend           string   `json:"backend"`
-	Python            string   `json:"python,omitempty"`
-	Model             string   `json:"model"`
-	Revision          string   `json:"revision"`
-	License           any      `json:"license,omitempty"`
-	Task              string   `json:"task"`
-	Runtime           string   `json:"runtime"`
-	Image             string   `json:"image"`
-	Pipeline          string   `json:"pipeline,omitempty"`
-	GPU               GPU      `json:"gpu"`
-	GPUMode           string   `json:"gpu_mode"`
-	GPUCount          int      `json:"host_gpu_count"`
-	Context           int      `json:"context,omitempty"`
-	Port              int      `json:"port"`
-	Name              string   `json:"name"`
-	Files             []string `json:"weight_files"`
-	WeightBytes       int64    `json:"weight_download_bytes"`
-	EstimatedVRAMMiB  int64    `json:"estimated_vram_mib"`
-	GPUMemoryFraction float64  `json:"gpu_memory_fraction,omitempty"`
-	Warnings          []string `json:"warnings"`
-	Blockers          []string `json:"blockers,omitempty"`
-}
-
-var textArchitectures = map[string]bool{
-	"LlamaForCausalLM": true, "MistralForCausalLM": true,
-	"Qwen2ForCausalLM": true, "Qwen3ForCausalLM": true,
-	"GemmaForCausalLM": true, "Gemma2ForCausalLM": true,
-	"Phi3ForCausalLM": true,
-}
-var imagePipelines = map[string]int64{
-	"StableDiffusionPipeline":   6144,
-	"StableDiffusionXLPipeline": 12288,
-	"FluxPipeline":              40960,
+	Schema              int      `json:"schema"`
+	Backend             string   `json:"backend"`
+	RecipeID            string   `json:"recipe_id,omitempty"`
+	RecipeStatus        string   `json:"recipe_status,omitempty"`
+	DType               string   `json:"dtype,omitempty"`
+	NativeLoader        string   `json:"native_loader,omitempty"`
+	MinPython           string   `json:"min_python,omitempty"`
+	NativeRequirements  []string `json:"native_requirements,omitempty"`
+	TemplateCompletions bool     `json:"template_completions,omitempty"`
+	DisableThinking     bool     `json:"disable_thinking,omitempty"`
+	Python              string   `json:"python,omitempty"`
+	Model               string   `json:"model"`
+	Revision            string   `json:"revision"`
+	License             any      `json:"license,omitempty"`
+	Task                string   `json:"task"`
+	Runtime             string   `json:"runtime"`
+	Image               string   `json:"image"`
+	Pipeline            string   `json:"pipeline,omitempty"`
+	GPU                 GPU      `json:"gpu"`
+	GPUMode             string   `json:"gpu_mode"`
+	GPUCount            int      `json:"host_gpu_count"`
+	Context             int      `json:"context,omitempty"`
+	Port                int      `json:"port"`
+	Name                string   `json:"name"`
+	Files               []string `json:"weight_files"`
+	WeightBytes         int64    `json:"weight_download_bytes"`
+	EstimatedVRAMMiB    int64    `json:"estimated_vram_mib"`
+	GPUMemoryFraction   float64  `json:"gpu_memory_fraction,omitempty"`
+	Warnings            []string `json:"warnings"`
+	Blockers            []string `json:"blockers,omitempty"`
 }
 
 func BuildPlan(m Model, h Host, o Options) (Plan, error) {
@@ -86,6 +83,34 @@ func BuildPlan(m Model, h Host, o Options) (Plan, error) {
 	}
 	if p.GPUMode == "cdi" && len(h.GPUs) != 1 {
 		return p, fmt.Errorf("CDI all-device mode is restricted to hosts with exactly one visible GPU; refusing to expose unselected GPUs")
+	}
+	recipe, known, err := findRecipe(m)
+	if err != nil {
+		return p, err
+	}
+	if !known {
+		return p, fmt.Errorf("unsupported model architecture/pipeline %v / %q; use modelship inspect for metadata", m.Config.Architectures, m.Index.Class)
+	}
+	if err = validateRecipeShape(recipe, m); err != nil {
+		return p, err
+	}
+	if recipe.Status == "planned" {
+		return p, fmt.Errorf("recipe %s is recognized but not deployable yet: %s", recipe.ID, strings.Join(recipe.Blockers, "; "))
+	}
+	if !contains(recipe.Backends, backend) {
+		return p, fmt.Errorf("recipe %s does not support backend %s", recipe.ID, backend)
+	}
+	p.RecipeID = recipe.ID
+	p.RecipeStatus = recipe.Status
+	p.DType = recipe.DType
+	p.NativeLoader = recipe.NativeLoader
+	p.MinPython = recipe.MinPython
+	p.NativeRequirements = append([]string{}, recipe.NativeRequirements...)
+	p.TemplateCompletions = recipe.TemplateCompletions
+	p.DisableThinking = recipe.DisableThinking
+	p.Warnings = append(p.Warnings, recipe.Notes...)
+	if recipe.Status == "experimental" && !o.Experimental {
+		p.Blockers = append(p.Blockers, "experimental recipe requires explicit --experimental opt-in")
 	}
 	if o.Context < 128 || o.Context > 131072 {
 		return p, fmt.Errorf("--context must be between 128 and 131072")
@@ -133,11 +158,8 @@ func BuildPlan(m Model, h Host, o Options) (Plan, error) {
 		"Memory estimates are heuristics, not fit or throughput guarantees; downloads also require tokenizer/config files and runtime dependency disk space.",
 		"Review the model license and accept any gated access terms before deployment.",
 		"Only one GPU is used; multi-GPU sharding and automatic quantization are not implemented.")
-	if m.Index.Class != "" {
-		minimum, ok := imagePipelines[m.Index.Class]
-		if !ok {
-			return p, fmt.Errorf("unsupported Diffusers pipeline %q; supported: StableDiffusionPipeline, StableDiffusionXLPipeline, FluxPipeline", m.Index.Class)
-		}
+	if recipe.Kind == "image" {
+		minimum := recipe.MemoryFloorMiB
 		p.Task = o.Task
 		if p.Task == "auto" {
 			p.Task = "text-to-image"
@@ -166,11 +188,8 @@ func BuildPlan(m Model, h Host, o Options) (Plan, error) {
 		if o.Task != "auto" && o.Task != "text-generation" {
 			return p, fmt.Errorf("this is a Transformers model, not a supported Diffusers pipeline")
 		}
-		if m.Hub.PipelineTag != "" && m.Hub.PipelineTag != "text-generation" {
+		if !recipe.TextOnly && m.Hub.PipelineTag != "" && m.Hub.PipelineTag != "text-generation" {
 			return p, fmt.Errorf("unsupported repository task %q", m.Hub.PipelineTag)
-		}
-		if len(m.Config.Architectures) != 1 || !textArchitectures[m.Config.Architectures[0]] {
-			return p, fmt.Errorf("unsupported text architecture %v; compatibility must be added explicitly", m.Config.Architectures)
 		}
 		if q := strings.TrimSpace(string(m.Config.Quantization)); q != "" && q != "null" && q != "{}" {
 			return p, fmt.Errorf("prequantized Transformers weights are not supported yet; use an unquantized safetensors repository")
@@ -189,21 +208,30 @@ func BuildPlan(m Model, h Host, o Options) (Plan, error) {
 			}
 		}
 		p.Context = o.Context
+		c := m.Config
+		if c.TextConfig != nil {
+			c = *c.TextConfig
+		}
+		if recipe.MinCompute != "" {
+			var major, minor int
+			if _, err := fmt.Sscanf(recipe.MinCompute, "%d.%d", &major, &minor); err != nil || !computeAtLeast(p.GPU.Compute, major, minor) {
+				p.Blockers = append(p.Blockers, "recipe requires compute capability >= "+recipe.MinCompute)
+			}
+		}
 		// vLLM expresses its budget as a fraction of total VRAM. Respect memory
 		// already used by other workloads rather than reserving 90% of total.
 		p.GPUMemoryFraction = math.Floor(0.9*float64(p.GPU.FreeMiB)/float64(p.GPU.TotalMiB)*10000) / 10000
 		if p.GPUMemoryFraction < 0.0001 {
 			p.Blockers = append(p.Blockers, "no usable GPU memory budget")
 		}
-		if m.Config.MaxPosition > 0 && o.Context > m.Config.MaxPosition {
-			return p, fmt.Errorf("--context %d exceeds model max_position_embeddings %d", o.Context, m.Config.MaxPosition)
+		if c.MaxPosition > 0 && o.Context > c.MaxPosition {
+			return p, fmt.Errorf("--context %d exceeds model max_position_embeddings %d", o.Context, c.MaxPosition)
 		}
 		p.Files, p.WeightBytes = weightFiles(m.Hub.Siblings, false)
 		weightMemory := float64(p.WeightBytes)
 		if m.Hub.Safetensors.Total > 0 {
 			weightMemory = float64(m.Hub.Safetensors.Total) * 2
 		}
-		c := m.Config
 		headDim := c.HeadDim
 		if headDim == 0 && c.Heads > 0 {
 			headDim = c.Hidden / c.Heads
@@ -218,7 +246,7 @@ func BuildPlan(m Model, h Host, o Options) (Plan, error) {
 			p.Warnings = append(p.Warnings, "KV-cache dimensions missing; assuming 2 GiB for a single sequence")
 		}
 		p.EstimatedVRAMMiB = ceilMiB(weightMemory*1.15+kv) + 2048
-		p.Warnings = append(p.Warnings, "Text deployment defaults to float16, eager mode and one concurrent sequence; optimized concurrency tuning is future work.")
+		p.Warnings = append(p.Warnings, "Text deployment uses "+p.DType+", eager mode and one concurrent sequence; optimized concurrency tuning is future work.")
 		if backend == "native" {
 			p.Warnings = append(p.Warnings, "Native Transformers API supports non-streaming completions/chat only; it is not a replacement for vLLM throughput or full OpenAI API compatibility.")
 		}

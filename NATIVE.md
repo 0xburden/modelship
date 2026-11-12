@@ -5,7 +5,7 @@ Use this backend when host CUDA PyTorch works but Docker GPU passthrough does no
 ## Requirements
 
 - Linux amd64 with an NVIDIA GPU and working `nvidia-smi`.
-- Python 3.10+ with **already installed, functioning CUDA-enabled PyTorch**.
+- Python 3.10+ with **already installed, functioning CUDA-enabled PyTorch** for established recipes; experimental recipes may require a newer Python (Gemma 4: >=3.11).
 - The selected Python's PyTorch must be available to a new `venv --system-site-packages`. A PyTorch installed only inside a parent virtual environment may not be inherited; use the working system Python in that case. The installer checks inheritance before invoking pip.
 - Python's `venv`/pip support (on Ubuntu, the matching `python3-venv` package may be required).
 - Network access for metadata, service dependencies, and any uncached weights.
@@ -28,7 +28,7 @@ modelship status --backend native --name chat
 
 `--python` names the **base interpreter** with working CUDA PyTorch. Do not resolve a venv interpreter symlink to the system interpreter yourself; that would change its import environment. Default: `python3`.
 
-Native text uses **Transformers**, not vLLM. The initial implementation is serial, non-streaming, float16, and eager attention. It supports a limited `/v1/completions`, `/v1/chat/completions`, and `/v1/models` interface—not the complete OpenAI protocol. Request limits are documented in `/docs`. Chat requires a tokenizer chat template. Streaming/tool calls are not implemented; unsupported fields are rejected.
+Native text uses **Transformers**, not vLLM. The initial implementation is serial, non-streaming, and eager attention. Established recipes use float16; the experimental Gemma 4 recipe uses BF16, a modern conditional-generation loader, and its own dependency pins. See `MODEL_SUPPORT.md`; it is text-only and requires `--experimental`. It supports a limited `/v1/completions`, `/v1/chat/completions`, and `/v1/models` interface—not the complete OpenAI protocol. Request limits are documented in `/docs`. Chat requires a tokenizer chat template. Streaming/tool calls are not implemented; unsupported fields are rejected.
 
 ## Images
 
@@ -53,7 +53,7 @@ After confirmation, the CLI:
 3. Creates a private per-deployment `--system-site-packages` virtual environment.
 4. Verifies that the new environment imports the **same PyTorch before pip runs**. If not, installation fails rather than trying to obtain another CUDA wheel.
 5. Installs pinned service dependencies with a constraint matching the existing torch package version. It never explicitly installs torch.
-6. Runs CUDA computation again and refuses startup if PyTorch's imported file/version changed.
+6. Runs CUDA computation again and refuses startup if PyTorch's imported file/version changed. Recipe ID, loader, dtype, and dependency pins are retained in the plan. Recipe-enabled deployments use native state schema 2 (older CLIs reject it safely); the new CLI can still read established schema-1 deployments with backward-compatible defaults.
 7. Starts one detached worker, waits for health reporting the exact model revision and unique run identity, and prints its localhost endpoint.
 
 The host Python environment is not modified. Native dependencies are pinned at their direct versions; this is not a fully locked dependency graph. Shared host packages remain part of the trusted runtime. Native mode is **not a sandbox**: it runs as your user.

@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "recipes": [
+    {
+      "id": "transformers-text", "name": "Established causal language models", "kind": "text", "status": "supported",
+      "architectures": ["LlamaForCausalLM", "MistralForCausalLM", "Qwen2ForCausalLM", "Qwen3ForCausalLM", "GemmaForCausalLM", "Gemma2ForCausalLM", "Phi3ForCausalLM"],
+      "backends": ["native", "docker"], "tasks": ["text-generation"], "runtime": "transformers", "native_loader": "causal-lm", "dtype": "float16",
+      "native_requirements": ["transformers==4.56.2", "huggingface-hub==0.36.0", "safetensors==0.6.2", "fastapi==0.116.1", "uvicorn==0.35.0", "pydantic==2.11.7"],
+      "notes": ["Runtime path tested with Qwen2.5-3B; this is not verification of every matching repository."]
+    },
+    {
+      "id": "stable-diffusion", "name": "Stable Diffusion", "kind": "image", "status": "supported",
+      "pipelines": ["StableDiffusionPipeline"], "backends": ["native", "docker"], "tasks": ["text-to-image", "image-to-image"], "runtime": "diffusers", "native_loader": "auto-pipeline", "dtype": "float16", "memory_floor_mib": 6144,
+      "native_requirements": ["transformers==4.56.2", "huggingface-hub==0.36.0", "safetensors==0.6.2", "fastapi==0.116.1", "uvicorn==0.35.0", "pydantic==2.11.7", "diffusers==0.35.1", "accelerate==1.10.1", "pillow==11.3.0", "sentencepiece==0.2.1", "protobuf==6.32.1"]
+    },
+    {
+      "id": "sdxl", "name": "Stable Diffusion XL", "kind": "image", "status": "supported",
+      "pipelines": ["StableDiffusionXLPipeline"], "backends": ["native", "docker"], "tasks": ["text-to-image", "image-to-image"], "runtime": "diffusers", "native_loader": "auto-pipeline", "dtype": "float16", "memory_floor_mib": 12288,
+      "native_requirements": ["transformers==4.56.2", "huggingface-hub==0.36.0", "safetensors==0.6.2", "fastapi==0.116.1", "uvicorn==0.35.0", "pydantic==2.11.7", "diffusers==0.35.1", "accelerate==1.10.1", "pillow==11.3.0", "sentencepiece==0.2.1", "protobuf==6.32.1"],
+      "notes": ["Reference SDXL base model tested for native generation/editing on A6000."]
+    },
+    {
+      "id": "flux", "name": "FLUX.1 standard pipeline", "kind": "image", "status": "supported",
+      "pipelines": ["FluxPipeline"], "backends": ["native", "docker"], "tasks": ["text-to-image", "image-to-image"], "runtime": "diffusers", "native_loader": "auto-pipeline", "dtype": "bfloat16", "memory_floor_mib": 40960,
+      "native_requirements": ["transformers==4.56.2", "huggingface-hub==0.36.0", "safetensors==0.6.2", "fastapi==0.116.1", "uvicorn==0.35.0", "pydantic==2.11.7", "diffusers==0.35.1", "accelerate==1.10.1", "pillow==11.3.0", "sentencepiece==0.2.1", "protobuf==6.32.1"],
+      "notes": ["Adapter implemented, but real FLUX inference remains unvalidated; no CPU offload or quantized variants."]
+    },
+    {
+      "id": "gemma4-text", "name": "Gemma 4 multimodal weights, text-only API", "kind": "text", "status": "experimental",
+      "repositories": ["google/gemma-4-E4B-it"], "architectures": ["Gemma4ForConditionalGeneration"],
+      "backends": ["native"], "tasks": ["text-generation"], "runtime": "transformers", "native_loader": "multimodal-lm", "dtype": "bfloat16", "min_python": "3.11", "min_compute": "8.0", "text_only": true, "template_completions": true, "disable_thinking": true,
+      "native_requirements": ["transformers==5.22.2", "huggingface-hub==2.4.0", "safetensors==0.8.0", "accelerate==1.15.0", "pillow==11.3.0", "fastapi==0.116.1", "uvicorn==0.35.0", "pydantic==2.11.7"],
+      "notes": ["Loads the full conditional-generation checkpoint; E4B effective parameters do not mean 4B stored parameters.", "Text prompts only. Image/audio/video inputs and tool calling are not implemented.", "Uses a separate modern Transformers environment; existing 4.x deployments are not upgraded."]
+    },
+    {
+      "id": "qwen3.8-multimodal", "name": "Qwen3.8 / Qwen3.5 conditional generation", "kind": "text", "status": "planned",
+      "repositories": ["Qwen/Qwen3.8-27B"], "architectures": ["Qwen3_5ForConditionalGeneration"], "backends": ["native"], "tasks": ["text-generation"], "runtime": "transformers", "dtype": "bfloat16", "text_only": true,
+      "blockers": ["Quantization/CPU-offload adapter is not implemented; this 27B BF16 checkpoint exceeds 48 GiB VRAM before KV cache/overhead.", "Hybrid linear/full attention and multimodal loading require a modern, separately validated runtime; do not reuse the old causal-LM recipe."]
+    },
+    {
+      "id": "qwen-image21", "name": "Qwen Image 2.1 generation and editing", "kind": "image", "status": "planned",
+      "repositories": ["Qwen/Qwen-Image-2.1"], "pipelines": ["QwenImage21Pipeline"], "backends": ["native"], "tasks": ["text-to-image", "image-to-image"], "runtime": "diffusers", "dtype": "bfloat16",
+      "blockers": ["Dedicated QwenImage21Pipeline adapter and modern dependency profile are not implemented; the same pipeline handles generation and editing, unlike the current AutoPipeline split.", "The Qwen Research License grants non-commercial research/evaluation use only unless a separate commercial license is obtained; review LICENSE at the pinned model revision."],
+      "notes": ["Count text encoder, image transformer, and VAE weights, not just the advertised 7B image component."]
+    },
+    {
+      "id": "moss-image", "name": "MOSS Image SFT", "kind": "image", "status": "planned",
+      "repositories": ["OpenMOSS-Team/MOSS-Image-SFT"], "pipelines": ["MOSSImagePipeline"], "backends": ["native"], "tasks": ["text-to-image"], "runtime": "diffusers", "dtype": "bfloat16", "requires_custom_code": true,
+      "blockers": ["Requires repository-provided pipeline/scheduler/transformer Python code. Explicit opt-in, revision/code pinning, and source review must precede execution.", "Dedicated loader with mixed BF16/FP32 component dtypes and CPU noise generator is not implemented."]
+    },
+    {
+      "id": "wan22-t2v-native", "name": "WAN 2.2 T2V A14B original checkpoint", "kind": "video", "status": "planned",
+      "repositories": ["Wan-AI/Wan2.2-T2V-A14B"], "backends": ["native"], "tasks": ["text-to-video"], "runtime": "wan", "requires_custom_code": true,
+      "blockers": ["Video runtime, bounded asynchronous job API, frame/duration limits, and video artifact export are not implemented.", "Original checkpoint has separate high/low-noise expert files plus PTH support weights. Published files exceed the current 100 GB server disk; an optimized/converted repository would require explicit selection.", "Do not automatically deserialize PTH checkpoints or enable model-provided code."],
+      "notes": ["The upstream single-GPU example specifies at least 80 GB VRAM; A6000 deployment requires a separately validated optimization/offload recipe."]
+    }
+  ]
+}

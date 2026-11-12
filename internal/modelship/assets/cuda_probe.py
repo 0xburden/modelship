@@ -2,6 +2,7 @@
 import importlib.metadata
 import json
 import os
+import sys
 
 import torch
 
@@ -12,6 +13,7 @@ if value != 4.0:
     raise RuntimeError("CUDA computation smoke test failed")
 print(json.dumps({
     "torch_version": torch.__version__,
+    "python_version": ".".join(str(part) for part in sys.version_info[:3]),
     "torch_package_version": importlib.metadata.version("torch"),
     "torch_file": os.path.realpath(torch.__file__),
     "cuda_version": torch.version.cuda,

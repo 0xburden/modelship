@@ -1,0 +1,128 @@
+{
+  "source": "https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT/tree/f972bd4b4b9e3852133cc5da954d87bc32cd8fb9",
+  "hub": {
+    "id": "OpenMOSS-Team/MOSS-Image-SFT",
+    "sha": "f972bd4b4b9e3852133cc5da954d87bc32cd8fb9",
+    "pipeline_tag": "text-to-image",
+    "library_name": "diffusers",
+    "gated": false,
+    "safetensors": {
+      "parameters": {
+        "BF16": 5082308608,
+        "F32": 16
+      },
+      "total": 5082308624
+    },
+    "cardData": {
+      "license": "apache-2.0"
+    },
+    "siblings": [
+      {
+        "rfilename": "text_encoder/model-00001-of-00004.safetensors",
+        "blobId": "0d38dfc792ed083694e3c270b665ad1829b55f2f",
+        "size": 4973910744,
+        "lfs": {
+          "sha256": "abfaa3d3a8612508c85ee8f6da9c734b862f10298b903765c4ad384177c32b0b",
+          "size": 4973910744,
+          "pointerSize": 135
+        }
+      },
+      {
+        "rfilename": "text_encoder/model-00002-of-00004.safetensors",
+        "blobId": "23d42f85dff3e5c4e640717ea5add712b8d0b76a",
+        "size": 4988364288,
+        "lfs": {
+          "sha256": "9112637fa6bf4d07bafd6ae268852b18d3d0c1242f4ee901c5579006e5bd4894",
+          "size": 4988364288,
+          "pointerSize": 135
+        }
+      },
+      {
+        "rfilename": "text_encoder/model-00003-of-00004.safetensors",
+        "blobId": "11b611fa24601f8c4997820bce15e78aa54ee92f",
+        "size": 4954202112,
+        "lfs": {
+          "sha256": "956f1ef51d0cfe610b0d22987c0b7821c36e3ce228abceccef523518bcf079dc",
+          "size": 4954202112,
+          "pointerSize": 135
+        }
+      },
+      {
+        "rfilename": "text_encoder/model-00004-of-00004.safetensors",
+        "blobId": "237590900c1935ec3fa8faee4e9e605368108631",
+        "size": 1869001848,
+        "lfs": {
+          "sha256": "9e21d20e8adde88c3e0b65d4a0d251f143d98ee9d52db36b4348361091e4e208",
+          "size": 1869001848,
+          "pointerSize": 135
+        }
+      },
+      {
+        "rfilename": "transformer/diffusion_pytorch_model-00001-of-00003.safetensors",
+        "blobId": "0e8d47c748a2b010a53ca388ce3bb52baec8c37d",
+        "size": 4991978016,
+        "lfs": {
+          "sha256": "e40d3444940a0b0fd7cd45ba7959a5bd3d5efd7ddf87aae5ce4d87ce8aa03d01",
+          "size": 4991978016,
+          "pointerSize": 135
+        }
+      },
+      {
+        "rfilename": "transformer/diffusion_pytorch_model-00002-of-00003.safetensors",
+        "blobId": "8a8dab857bf0fd88b6cbadbea2dfdd1aa4697d57",
+        "size": 4983137016,
+        "lfs": {
+          "sha256": "d106da790ec2924ffd8af04b4ffa8f8de281a974b58e55649c3ec596dc8ef033",
+          "size": 4983137016,
+          "pointerSize": 135
+        }
+      },
+      {
+        "rfilename": "transformer/diffusion_pytorch_model-00003-of-00003.safetensors",
+        "blobId": "0752eeb93cdd31c56cf234accb79344e19470737",
+        "size": 189549184,
+        "lfs": {
+          "sha256": "11f637ab17c7093344a6110a1e87ffda8e56558dc55183d8e790222cfcdcf52d",
+          "size": 189549184,
+          "pointerSize": 134
+        }
+      },
+      {
+        "rfilename": "vae/diffusion_pytorch_model.safetensors",
+        "blobId": "e81a7a291d5de6a0b0303cf19f07b109bebfde1b",
+        "size": 249521372,
+        "lfs": {
+          "sha256": "c3bdf94dc67ec69b30ea9fe1fa8340085679cae64d019f7c7e4a9921f1a7f17a",
+          "size": 249521372,
+          "pointerSize": 134
+        }
+      }
+    ]
+  },
+  "config": {},
+  "index": {
+    "_class_name": "MOSSImagePipeline",
+    "_diffusers_version": "0.38.0",
+    "scheduler": [
+      "pipeline_moss_image",
+      "MOSSImageScheduler"
+    ],
+    "text_encoder": [
+      "transformers",
+      "Qwen3_5Model"
+    ],
+    "tokenizer": [
+      "transformers",
+      "Qwen2Tokenizer"
+    ],
+    "transformer": [
+      "pipeline_moss_image",
+      "MOSSImageTransformer"
+    ],
+    "vae": [
+      "diffusers",
+      "AutoencoderKLFlux2"
+    ]
+  },
+  "source_config": "model_index.json"
+}

@@ -9,7 +9,7 @@ A GPU-first model deployment CLI: inspect a Hugging Face repository and the loca
 - Linux **amd64**, NVIDIA; one selected GPU per deployment.
 - **Docker backend (default):** local daemon with standard NVIDIA Container Toolkit or provider-managed CDI, conservative CUDA 12.8 driver minimum **570.26**. CDI mode currently requires exactly one visible GPU and is not fully validated on Thunder.
 - **Native backend:** working host CUDA-enabled PyTorch plus Python/venv. No Docker/toolkit installation or hard-coded CUDA driver minimum; actual CUDA computation is checked. See **[NATIVE.md](NATIVE.md)**. This is the recommended path for the current Thunder server.
-- Text: unquantized **safetensors** repositories with explicitly recognized architectures: Llama, Mistral, Qwen2, Qwen3, Gemma, Gemma2, Phi3 causal LMs. Exact architecture names are in `internal/modelship/plan.go`.
+- Text: unquantized **safetensors** repositories with explicitly recognized architectures: Llama, Mistral, Qwen2, Qwen3, Gemma, Gemma2, Phi3 causal LMs. Exact architecture names and dependency profiles are in `internal/modelship/assets/recipes.json`.
 - Images: standard Diffusers repositories whose `model_index.json` declares **StableDiffusionPipeline**, **StableDiffusionXLPipeline**, or **FluxPipeline**. Both text-to-image and image-to-image are selectable; a deployment serves **one task**.
 - Text requires compute capability >=7.5 in Docker / >=7.0 natively; SD/SDXL >=7.0; FLUX >=8.0 (bfloat16).
 
@@ -32,6 +32,10 @@ docker run --rm -v "$PWD:/src" -w /src golang:1.24.4 \
 ```
 
 The Docker command builds for the container's platform. Use `scripts/release.sh` for a Linux amd64 release from any supported Go build host.
+
+## Recipe discovery (feature branch)
+
+The `feat/model-recipes` iteration adds host-independent `modelship catalog` and `modelship inspect MODEL [--json]`, versioned dependency profiles, and an opt-in Gemma 4 text-only recipe. Qwen3.8, Qwen Image 2.1, MOSS Image, and WAN are recognized with explicit implementation/resource/license blockers, **not silently enabled**. See **[MODEL_SUPPORT.md](MODEL_SUPPORT.md)** for the requested-model matrix and LoRA roadmap. These additions are not in the published `v0.2.0-alpha.1`.
 
 ## Native quickstart (Thunder / working host PyTorch)
 
@@ -265,7 +269,9 @@ cmd/modelship/                 Go entrypoint
 internal/modelship/
   hub.go                       Hugging Face metadata/config inspection
   hardware.go                  NVIDIA, driver, RAM, Docker/disk discovery
-  plan.go                      Explicit compatibility and resource rules
+  plan.go                      Compatibility and resource planning
+  recipes.go                   Versioned embedded recipe validation/matching
+  inspect.go                   Hardware-independent metadata inspection/catalog
   deploy.go                    Containers, cache, readiness, lifecycle, text smoke
   gpu_access.go                Standard NVIDIA / Thunder Compute CDI GPU access
   native.go                    Native environment, CUDA preflight, worker lifecycle
@@ -278,4 +284,5 @@ DEPLOYMENT.md                  GitHub/Dokploy publishing and curl test walkthrou
 tests/                         Bootstrap, image/text API, native CLI integration tests
 NATIVE.md                      Native deployment guide
 VALIDATION.md                  GPU baseline results and outstanding checks
+MODEL_SUPPORT.md               New-model profiles, size/license blockers, LoRA roadmap
 ```
