@@ -1,9 +1,14 @@
-"""Native service entrypoint. Never use wildcard binds on provider-managed hosts."""
+"""Native entrypoint: loopback by default; non-loopback requires bearer auth."""
 import argparse
+import importlib
 import os
 import re
 
 import uvicorn
+from api_auth import BearerAuth, load_access
+
+# Fail closed before importing inference modules or downloading/loading weights.
+access = load_access()
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--run-id", required=True)
@@ -21,8 +26,8 @@ elif task == "text-to-video":
 else:
     raise RuntimeError("unsupported native model task")
 uvicorn.run(
-    module + ":app",
-    host="127.0.0.1",
+    BearerAuth(importlib.import_module(module).app, access),
+    host=access.listen,
     port=int(os.environ["MODEL_PORT"]),
     workers=1,
     access_log=False,

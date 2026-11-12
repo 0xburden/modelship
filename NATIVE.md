@@ -42,13 +42,17 @@ modelship deploy stabilityai/stable-diffusion-xl-base-1.0 \
   --name images --port 8001 --wait 45m
 ```
 
-Use the JSON/base64 image API examples in `README.md`. For image-to-image, create a separate deployment with `--task image-to-image` and a distinct name/port; stop competing deployments as appropriate. One task is served per deployment. The image runtime is shared with the Docker adapter; the native entrypoint binds directly to localhost.
+Use the JSON/base64 image API examples in `README.md`. For image-to-image, create a separate deployment with `--task image-to-image` and a distinct name/port; stop competing deployments as appropriate. One task is served per deployment. The image runtime is shared with the Docker adapter; the native entrypoint defaults to localhost; a network listener requires explicit bearer authentication.
 
 ## Experimental image/video families
 
 [MODEL_SUPPORT.md](MODEL_SUPPORT.md) has exact pinned commands and contracts. Qwen Image needs separate `--research` acknowledgment, a dedicated same-pipeline editing contract (no `strength`), and enough **free** VRAM. MOSS additionally requires explicit `--trust-model-code` approval of one reviewed revision/three source hashes; this is not implied by research use. WAN requires explicit official converted safetensors selection, a much larger GPU/cache disk, and serves bounded asynchronous jobs, not the image endpoint. These adapters remain experimental. Pinned Qwen3.8 text and bounded WAN H.264 generation have now passed on A10080GB; Qwen Image/MOSS passed on A6000. This is not validation of every model variant or maximum request shape. The tested A100 WAN run needs explicit `--allow-risk` only for the conservative runtime heuristic; hard weights/disk checks remain enforced.
 
 All modern loaders place components directly on the selected CUDA device; no CPU offload/quantization is inferred. The planner counts all loaded components, including both WAN experts. `--allow-risk` never bypasses weights-alone fit, missing/invalid header metadata, disk limits or policy guards.
+
+## API access
+
+See [Native API authentication](README.md#native-api-authentication-v030-alpha2) for private key generation, explicit `--listen 0.0.0.0` opt-in and stopped-only migration of an existing deployment. Health/status/smoke requests authenticate automatically. Every native HTTP route is protected when enabled. Non-loopback without a valid private key is refused, never inferred from the environment. This does not add authentication to Docker services.
 
 ## Installation and PyTorch preservation
 
@@ -59,7 +63,7 @@ After confirmation, the CLI:
 3. Creates a private per-deployment `--system-site-packages` virtual environment.
 4. Verifies that the new environment imports the **same PyTorch before pip runs**. If not, installation fails rather than trying to obtain another CUDA wheel.
 5. Installs pinned service dependencies with a constraint matching the existing torch package version. It never explicitly installs torch.
-6. Runs CUDA computation again and refuses startup if PyTorch's imported file/version changed. Recipe ID, loader, component dtypes, dependency pins, research/code approval, reviewed source hashes and absolute cache path are retained. New native state uses **schema 3** (older CLIs reject it safely); this CLI still reads schema-1 and schema-2 deployments.
+6. Runs CUDA computation again and refuses startup if PyTorch's imported file/version changed. Recipe ID, loader, component dtypes, dependency pins, research/code approval, reviewed source hashes and absolute cache path are retained. New native state uses **schema 4** (older CLIs reject it safely); this CLI still reads schema-1, schema-2 and schema-3 deployments.
 7. Refreshes selected-GPU total/free VRAM against the saved weight minimum, then starts one detached worker, waits for health reporting the exact model revision and unique run identity, and prints its localhost endpoint.
 
 Workers set `USE_HUB_KERNELS=NO` to prevent implicit Transformers Hub-kernel downloads; standard loaders also reject model repository Python. MOSS is the sole explicit, reviewed-code exception.
@@ -113,7 +117,7 @@ Weights use the usual Hugging Face host cache (`HF_HUB_CACHE`, legacy `HUGGINGFA
 
 ## Network exposure
 
-The native entrypoint explicitly binds `127.0.0.1`, regardless of Docker's/provider's port-publishing behavior. There is **no API authentication** in the MVP. Do not configure public provider port forwarding or an unauthenticated proxy to these endpoints. Use an SSH tunnel or an authenticated TLS reverse proxy, and verify actual exposure on the provider.
+The managed native entrypoint defaults to `127.0.0.1`, regardless of Docker/provider port publishing. From v0.3.0-alpha.2 onward, an explicit `--listen 0.0.0.0` requires a valid private `--api-key-file`; every HTTP route then requires its bearer key. Keep the default loopback/tunnel setup unless you intend network access. Use trusted HTTPS ingress (such as Thunder's generated HTTPS URL) and verify both unauthenticated401 and authenticated200 responses before sharing. Bearer auth does not encrypt raw HTTP. Docker image APIs are unchanged and remain unauthenticated.
 
 ## Validation status
 

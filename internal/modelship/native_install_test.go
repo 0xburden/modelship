@@ -98,7 +98,7 @@ func TestNativeInstallConstrainsAndPreservesTorch(t *testing.T) {
 	if strings.Contains(string(b), "torch==") {
 		t.Fatal("explicit torch installation requested")
 	}
-	for _, name := range []string{"native_entry.py", "server.py", "text_server.py", "model_code.py", "video_server.py"} {
+	for _, name := range []string{"api_auth.py", "native_entry.py", "server.py", "text_server.py", "model_code.py", "video_server.py"} {
 		st, err := os.Stat(filepath.Join(dir, name))
 		if err != nil || st.Mode().Perm() != 0600 {
 			t.Fatal(name, err)

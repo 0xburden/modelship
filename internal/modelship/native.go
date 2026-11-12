@@ -28,9 +28,9 @@ type TorchInfo struct {
 	PythonVersion  string `json:"python_version,omitempty"`
 }
 
-// Schema 3 records research/code consent, component dtypes and cache paths.
+// Schema 4 also records the authentication/listener boundary.
 // Older CLIs must reject it instead of ignoring these execution constraints.
-const nativeSchemaVersion = 3
+const nativeSchemaVersion = 4
 
 type NativeConfig struct {
 	Schema int       `json:"schema"`
@@ -117,8 +117,14 @@ func nativeConfig(name string) (NativeConfig, string, error) {
 	if err = readJSONFile(filepath.Join(dir, "config.json"), &cfg); err != nil {
 		return cfg, dir, fmt.Errorf("read native deployment %s: %w", name, err)
 	}
-	if (cfg.Schema != 1 && cfg.Schema != 2 && cfg.Schema != nativeSchemaVersion) || cfg.Plan.Backend != "native" || cfg.Plan.Name != name || !commitPattern.MatchString(cfg.Plan.Revision) || cfg.Plan.Port < 1024 || cfg.Plan.Port > 65535 {
+	if (cfg.Schema != 1 && cfg.Schema != 2 && cfg.Schema != 3 && cfg.Schema != nativeSchemaVersion) || cfg.Plan.Backend != "native" || cfg.Plan.Name != name || !commitPattern.MatchString(cfg.Plan.Revision) || cfg.Plan.Port < 1024 || cfg.Plan.Port > 65535 {
 		return cfg, dir, fmt.Errorf("invalid native deployment metadata")
+	}
+	if cfg.Schema < 4 && (cfg.Plan.Listen != "" || cfg.Plan.APIKeyFile != "") {
+		return cfg, dir, fmt.Errorf("access settings require native schema 4")
+	}
+	if err := validateNativeAccess(cfg.Plan, false); err != nil {
+		return cfg, dir, err
 	}
 	return cfg, dir, nil
 }
@@ -153,6 +159,7 @@ func nativeEnv(p Plan, runID string) []string {
 		artifactDir = filepath.Join(dir, "artifacts")
 	}
 	overrides := map[string]string{
+		"MODEL_LISTEN": nativeListen(p), "MODEL_API_KEY_FILE": p.APIKeyFile,
 		"MODEL_COMPONENT_DTYPES": encoded(p.ComponentDTypes, "{}"),
 		"MODEL_RESEARCH":         strconv.FormatBool(p.Research), "MODEL_TRUST_CODE": strconv.FormatBool(p.TrustModelCode),
 		"MODEL_CODE_REVISION": p.CodeRevision, "MODEL_CODE_HASHES": encoded(p.CodeHashes, "{}"),
@@ -204,6 +211,9 @@ func probeTorch(ctx context.Context, python string, p Plan) (TorchInfo, error) {
 	return info, nil
 }
 func DeployNative(ctx context.Context, p Plan, wait time.Duration) error {
+	if err := validateNativeAccess(p, true); err != nil {
+		return err
+	}
 	if len(p.Blockers) > 0 {
 		return fmt.Errorf("deployment blocked: %s", strings.Join(p.Blockers, "; "))
 	}
@@ -261,7 +271,7 @@ func DeployNative(ctx context.Context, p Plan, wait time.Duration) error {
 	if err = writeJSONFile(filepath.Join(dir, "config.json"), cfg); err != nil {
 		return err
 	}
-	for _, name := range []string{"native_entry.py", "server.py", "text_server.py", "model_code.py", "video_server.py"} {
+	for _, name := range []string{"api_auth.py", "native_entry.py", "server.py", "text_server.py", "model_code.py", "video_server.py"} {
 		b, e := assets.ReadFile("assets/" + name)
 		if e != nil {
 			return e
@@ -316,6 +326,9 @@ func runNativeInstall(ctx context.Context, python string, args ...string) error 
 	return cmd.Run()
 }
 func startNative(ctx context.Context, cfg NativeConfig, dir string, wait time.Duration) error {
+	if err := validateNativeAccess(cfg.Plan, true); err != nil {
+		return err
+	}
 	old, err := loadNativeRun(dir)
 	if err == nil && nativeAlive(dir, old) {
 		return fmt.Errorf("native deployment already running (PID %d)", old.PID)
@@ -323,9 +336,9 @@ func startNative(ctx context.Context, cfg NativeConfig, dir string, wait time.Du
 	if err := verifyWeightFitNow(ctx, cfg.Plan); err != nil {
 		return err
 	}
-	listener, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", cfg.Plan.Port))
+	listener, err := net.Listen("tcp4", fmt.Sprintf("%s:%d", nativeListen(cfg.Plan), cfg.Plan.Port))
 	if err != nil {
-		return fmt.Errorf("native localhost port unavailable: %w", err)
+		return fmt.Errorf("native listen port unavailable: %w", err)
 	}
 	listener.Close()
 	id := make([]byte, 16)
@@ -381,6 +394,9 @@ func NativeExec(name, runID string) error {
 	}
 	cfg, dir, err := nativeConfig(name)
 	if err != nil {
+		return err
+	}
+	if err = validateNativeAccess(cfg.Plan, true); err != nil {
 		return err
 	}
 	python := filepath.Join(dir, "venv", "bin", "python")
@@ -445,7 +461,8 @@ func nativeAlive(dir string, run NativeRun) bool {
 func waitNative(ctx context.Context, cfg NativeConfig, dir string, run NativeRun, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	client := &http.Client{Timeout: 3 * time.Second}
+	client := nativeClient(3 * time.Second)
+	defer client.CloseIdleConnections()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
@@ -453,6 +470,9 @@ func waitNative(ctx context.Context, cfg NativeConfig, dir string, run NativeRun
 			return fmt.Errorf("native worker exited; use modelship logs --backend native --name %s", cfg.Plan.Name)
 		}
 		req, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("http://127.0.0.1:%d/health", cfg.Plan.Port), nil)
+		if err := nativeAuthorize(req, cfg.Plan); err != nil {
+			return err
+		}
 		if resp, err := client.Do(req); err == nil {
 			var health struct {
 				Ready    bool   `json:"ready"`
@@ -462,6 +482,9 @@ func waitNative(ctx context.Context, cfg NativeConfig, dir string, run NativeRun
 			}
 			decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 65536)).Decode(&health)
 			resp.Body.Close()
+			if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+				return fmt.Errorf("native readiness authentication rejected; worker retained; check key and restart after rotation")
+			}
 			if resp.StatusCode == 200 && decodeErr == nil && health.Ready && health.Model == cfg.Plan.Model && health.Revision == cfg.Plan.Revision && health.RunID == run.RunID {
 				return nil
 			}
@@ -527,7 +550,11 @@ func ManageNative(ctx context.Context, action, name string) error {
 			state = "running"
 			pid = run.PID
 		}
-		return printJSON(map[string]any{"backend": "native", "name": name, "state": state, "pid": pid, "model": cfg.Plan.Model, "revision": cfg.Plan.Revision, "endpoint": fmt.Sprintf("http://127.0.0.1:%d", cfg.Plan.Port), "log": filepath.Join(dir, "service.log"), "torch": cfg.Torch})
+		ready, healthError := false, ""
+		if state == "running" {
+			ready, healthError = nativeHealth(ctx, cfg, run)
+		}
+		return printJSON(map[string]any{"backend": "native", "name": name, "state": state, "pid": pid, "model": cfg.Plan.Model, "revision": cfg.Plan.Revision, "endpoint": fmt.Sprintf("http://127.0.0.1:%d", cfg.Plan.Port), "listen": nativeListen(cfg.Plan), "auth_enabled": cfg.Plan.APIKeyFile != "", "ready": ready, "health_error": healthError, "log": filepath.Join(dir, "service.log"), "torch": cfg.Torch})
 	}
 	if action == "logs" {
 		cmd := exec.CommandContext(ctx, "tail", "-n", "200", "-f", filepath.Join(dir, "service.log"))
@@ -560,7 +587,7 @@ func SmokeNative(ctx context.Context, name string) error {
 		return err
 	}
 	if cfg.Plan.Task != "text-generation" {
-		return fmt.Errorf("image smoke tests require a prompt/input; use the README image API examples")
+		return fmt.Errorf("image/video smoke tests require explicit inputs; use the README API examples")
 	}
 	run, err := loadNativeRun(dir)
 	if err != nil || !nativeAlive(dir, run) {
@@ -569,7 +596,12 @@ func SmokeNative(ctx context.Context, name string) error {
 	body, _ := json.Marshal(map[string]any{"model": cfg.Plan.Model, "prompt": "The capital of France is", "max_tokens": 8, "temperature": 0})
 	req, _ := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("http://127.0.0.1:%d/v1/completions", cfg.Plan.Port), strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := (&http.Client{Timeout: 2 * time.Minute}).Do(req)
+	if err = nativeAuthorize(req, cfg.Plan); err != nil {
+		return err
+	}
+	client := nativeClient(2 * time.Minute)
+	defer client.CloseIdleConnections()
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}

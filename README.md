@@ -48,7 +48,7 @@ modelship smoke --backend native --name chat
 modelship stop --backend native --name chat
 ```
 
-Native workers bind directly to `127.0.0.1`, reuse the base PyTorch through a private environment, and survive SSH disconnection. They do **not** auto-restart after crash/reboot. Specify `--backend native` on lifecycle commands too. Complete installation/lifecycle/API/security details: **[NATIVE.md](NATIVE.md)**. Test results and remaining GPU checks: **[VALIDATION.md](VALIDATION.md)**.
+Native workers default to `127.0.0.1` (network listeners require explicit bearer auth), reuse the base PyTorch through a private environment, and survive SSH disconnection. They do **not** auto-restart after crash/reboot. Specify `--backend native` on lifecycle commands too. Complete installation/lifecycle/API/security details: **[NATIVE.md](NATIVE.md)**. Test results and remaining GPU checks: **[VALIDATION.md](VALIDATION.md)**.
 
 ## Docker use on a GPU server
 
@@ -136,7 +136,7 @@ Cache volumes: `modelship-hf-cache` (text), `modelship-diffusers-cache` (images)
 
 ## APIs
 
-On standard, isolated Docker networking, the published ports bind to **127.0.0.1** on the server. **This is not guaranteed on provider-managed nested Docker such as Thunder Compute; see its warning above.** The runtime process listens on `0.0.0.0` inside the container. These APIs have **no authentication** in this MVP. Do not expose them directly; use an SSH tunnel or add a properly authenticated TLS reverse proxy, and ensure no direct unprotected route exists. Do not trust Docker localhost publishing as your only isolation boundary on old Docker releases, shared hosts, or non-isolated provider networks.
+On standard, isolated Docker networking, the published ports bind to **127.0.0.1** on the server. **This is not guaranteed on provider-managed nested Docker such as Thunder Compute; see its warning above.** The runtime process listens on `0.0.0.0` inside the container. These **Docker APIs have no authentication**; the native backend has a separate opt-in bearer-auth boundary below. Do not expose them directly; use an SSH tunnel or add a properly authenticated TLS reverse proxy, and ensure no direct unprotected route exists. Do not trust Docker localhost publishing as your only isolation boundary on old Docker releases, shared hosts, or non-isolated provider networks.
 
 ### Text — vLLM / native Transformers
 
@@ -228,14 +228,14 @@ Checksums from the same release host detect corruption, **not a compromised host
 
 ### Optional Dokploy static image
 
-Deploy `Dockerfile.releases` from this Git repository in Dokploy and route an HTTPS domain to container port 80. The multi-stage Dockerfile builds the Linux binary, installer, and checksums itself; `dist/` does not need to be committed or uploaded. The tracked `releases/current` file selects the version (`v0.3.0-alpha.1`); the old `RELEASE_VERSION` build argument is ignored with a warning. The build preserves checksum-pinned prior releases and refuses to overwrite an existing version with different bytes. Deploy a reviewed commit/tag. The service only serves static assets, not model requests or credentials. See **[DEPLOYMENT.md](DEPLOYMENT.md)** for the walkthrough.
+Deploy `Dockerfile.releases` from this Git repository in Dokploy and route an HTTPS domain to container port 80. The multi-stage Dockerfile builds the Linux binary, installer, and checksums itself; `dist/` does not need to be committed or uploaded. The tracked `releases/current` file selects the version (`v0.3.0-alpha.2`); the old `RELEASE_VERSION` build argument is ignored with a warning. The build preserves checksum-pinned prior releases and refuses to overwrite an existing version with different bytes. Deploy a reviewed commit/tag. The service only serves static assets, not model requests or credentials. See **[DEPLOYMENT.md](DEPLOYMENT.md)** for the walkthrough.
 
 ## Install WAN from the versioned release
 
 On Linux x86_64 with an idle A10080GB-class GPU, Python>=3.11 and existing working CUDA PyTorch>=2.9, plus sufficient free disk (roughly150GB recommended):
 
 ```sh
-export MODELSHIP_RELEASE_BASE=https://modelship.bubuntu.xyz/v0.3.0-alpha.1
+export MODELSHIP_RELEASE_BASE=https://modelship.bubuntu.xyz/v0.3.0-alpha.2
 curl -fsSL "$MODELSHIP_RELEASE_BASE/install.sh" -o /tmp/modelship-install.sh
 # Inspect this trusted script before running it.
 sh /tmp/modelship-install.sh deploy Wan-AI/Wan2.2-T2V-A14B \
@@ -247,6 +247,36 @@ sh /tmp/modelship-install.sh deploy Wan-AI/Wan2.2-T2V-A14B \
 ```
 
 `--allow-risk` acknowledges the conservative activation estimate on the tested80GB configuration. It cannot bypass hard weights/free-VRAM/disk checks. No host PyTorch/driver replacement, quantization or offload is enabled. The API binds to localhost; use an SSH/private tunnel for the console, never publicly expose this unauthenticated model service. The new binary replaces `~/.local/bin/modelship` unless `MODELSHIP_INSTALL_DIR` is set.
+
+## Native API authentication (v0.3.0-alpha.2+)
+
+Native listeners remain **127.0.0.1 by default**. To use Thunder's generated HTTPS URL, explicitly enable a network listener with bearer authentication. This is native-only; these flags are rejected for Docker deployments. API keys are independent of `HF_TOKEN` and the console login password.
+
+For an **existing deployment**, using the updated CLI:
+
+```sh
+# Creates a random 256-bit key in a private file; never prints its value.
+modelship auth-keygen --file "$HOME/.config/modelship/wan.key"
+
+# Download any videos you want to keep first; stopping invalidates job IDs.
+modelship stop --backend native --name wan-video
+modelship configure --backend native --name wan-video \
+  --listen 0.0.0.0 --api-key-file "$HOME/.config/modelship/wan.key"
+modelship start --backend native --name wan-video
+modelship status --backend native --name wan-video
+```
+
+`configure` refuses to touch a running worker. It updates only access metadata, the entrypoint and the tiny auth module: **no model download, pip install, host PyTorch/driver change, inference-module rewrite or automatic restart**. The same pinned model/cache/venv, GPU and memory checks are retained. `start` still loads weights and refreshes VRAM fit. New deployments can pass the same `--listen`/`--api-key-file` flags to `plan`/`deploy`.
+
+Forward the selected port with Thunder as usual and add the resulting `https://INSTANCE-18032.thundercompute.net` base URL to Modelship Console. Put the file's **key value** in the console's existing **Upstream bearer key** field using a secure local/clipboard workflow; never paste secrets into a chat or commit them. The console retains this value only in tab memory and sends it as `Authorization: Bearer <key>`.
+
+All native HTTP paths are protected when enabled: health, model discovery, inference, video status/content, docs/OpenAPI, and unknown routes. Missing/malformed/wrong credentials return401 before body parsing or inference. Query-string/cookie keys are not accepted. Authenticated responses use `Cache-Control: no-store`; CLI readiness/status/text smoke authenticate automatically and refuse redirects. An ordinary browser/curl request without a header returning401 is **expected**.
+
+Keys must be owned, regular **0600** files with32–128 base64url characters; the generator emits43 characters plus a newline and refuses overwrites. Generation needs a private parent directory (created0700 if absent). Symlinks, FIFOs, insecure permissions and invalid keys fail closed before weight loading. Only the absolute path—not the key value—is stored in schema4 metadata or the worker environment/argv. Older CLIs reject schema4; keep using the updated CLI after migration. Legacy schemas1–3 without access settings still load and remain loopback-only.
+
+**Rotation requires a stop/configure/start** with a newly generated key file; a running worker holds the startup key digest, so changing/deleting the file does not revoke that active key immediately. A missing key prevents a new start, but does not prevent status/stop/uninstall. Uninstall does not remove the default external key file.
+
+Use **HTTPS ingress or a private tunnel**—the native worker serves HTTP and bearer auth does not encrypt it. This is one shared API key, not accounts/roles, per-user quotas or distributed rate limiting. No running deployment is exposed merely by installing the new CLI.
 
 ## Security and operational limits
 

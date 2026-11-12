@@ -11,6 +11,8 @@ const VLLMImage = "vllm/vllm-openai:v0.10.2"
 const ImageRuntime = "modelship-diffusers:0.1.0"
 
 type Options struct {
+	Listen         string
+	APIKeyFile     string
 	Backend        string
 	Python         string
 	Task           string
@@ -26,6 +28,8 @@ type Options struct {
 	TrustModelCode bool
 }
 type Plan struct {
+	Listen              string            `json:"listen,omitempty"`
+	APIKeyFile          string            `json:"api_key_file,omitempty"`
 	Schema              int               `json:"schema"`
 	Backend             string            `json:"backend"`
 	RecipeID            string            `json:"recipe_id,omitempty"`
@@ -78,7 +82,15 @@ func BuildPlan(m Model, h Host, o Options) (Plan, error) {
 	if backend != "docker" && backend != "native" {
 		return Plan{}, fmt.Errorf("--backend must be docker or native")
 	}
+	o.Backend = backend
+	if err := accessOptions(&o); err != nil {
+		return Plan{}, err
+	}
 	p := Plan{Backend: backend, Schema: 1, Model: m.Hub.ID, Revision: m.Hub.SHA, License: m.Hub.CardData.License, Port: o.Port, Name: o.Name, GPUMode: o.GPUMode, GPUCount: len(h.GPUs)}
+	p.Listen, p.APIKeyFile = o.Listen, o.APIKeyFile
+	if p.Listen == "0.0.0.0" {
+		p.Warnings = append(p.Warnings, "Network listener enabled with bearer auth: use trusted HTTPS ingress; raw HTTP is not encrypted")
+	}
 	if p.GPUMode == "" {
 		p.GPUMode = "auto"
 	}
