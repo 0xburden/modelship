@@ -170,7 +170,36 @@ After explicit user approval, `OpenMOSS-Team/MOSS-Image-SFT` at `f972bd4b4b9e385
 - Device-memory snapshots: **25976 MiB loaded / 32562 MiB after generation**, not peak memory. Existing host PyTorch remained **2.12.1+cu130**, same import path/package version, with pre/post CUDA checks passing.
 - All temporary image workers were stopped and uninstalled. **Both original demos were restored and CLI smoke-tested.** Final device snapshot: **21364 MiB used / 27776 MiB free**. No restore/cleanup errors.
 - Shared HF weights remain cached intentionally; no automatic cache eviction. Disk ended at **14549 MiB free** on the 100 GB instance. More large model downloads need additional space or deliberate cache management.
-- All **55 Python tests passed on Linux with the actual CLI binary**, including three fake-worker lifecycle integrations; the extra regression test covers the Qwen edit precision bridge. Go race tests/vet and Linux Go subprocess tests also pass. Qwen3.8/full WAN GPU inference and actual WAN encoding/quality still require larger hardware.
+- All **55 Python tests passed on Linux with the actual CLI binary**, including three fake-worker lifecycle integrations; the extra regression test covers the Qwen edit precision bridge. Go race tests/vet and Linux Go subprocess tests also pass. At that stage, Qwen3.8/full WAN GPU inference and actual WAN encoding still required larger hardware; both were subsequently exercised on the A100 instance in the sections below.
+
+## Larger-instance Qwen3.8 validation — passed
+
+The user supplied instance `1` (`pjj91chs`) specifically for the remaining large models. Observed hardware: **NVIDIA A100-SXM4-80GB, 81920 MiB total / 81176 MiB initially free**, compute8.0; 96 GB host RAM; 150 GB disk (143688 MiB initially available). Ubuntu22.04.5/Python3.12.13/driver610.43.02/PyTorch2.12.1+cu130. Actual CUDA preflight returned4.0. No driver or host-Torch changes.
+
+`Qwen/Qwen3.8-27B` at `37561816e66b5b9153b1b64c10968c18c1e6f4a0` passed native deployment, full BF16/conditional-generation loading, eager text-only inference with context4096, and **no quantization/offload/heuristic override**. The header minimum was51.747GiB; runtime heuristic64010MiB, fitting this GPU.
+
+- Semantic completion: `The capital of France is **Paris**.` Arithmetic chat returned`56` for7×8. General chat produced a coherent GPU explanation.
+- All live text API/model listing/error/context and busy checks passed; concurrent requests returned200/503. Media payload rejected422, preserving text-only scope.
+- Individual completion/chat times2.047s/2.246s, not a benchmark.
+- Cached stop/start and CLI smoke passed. Host PyTorch import/version/package metadata were preserved.
+- Device-memory snapshot52733MiB loaded (not a peak). Provider counters reserve memory separately; total/free/used may not sum exactly.
+- Testing is sequential because both source checkpoints exceed the150GB disk together. Qwen used a newly created, marked, private test cache. After stopping/uninstalling only its test deployment, the harness verified that no saved deployment referenced that cache and deleted **only that owned cache** before WAN. Global/user model caches and credentials were not removed.
+- Evidence: ignored `validation-artifacts/a100-large-models/` and remote `~/modelship-validation/large-models/run-20261112-082534/`. No operations were issued against instance0.
+
+### WAN 2.2 dual-expert video/codec validation — passed
+
+On the same dedicated A10080GB/96GBRAM/150GB-disk instance, explicitly selected official `Wan-AI/Wan2.2-T2V-A14B-Diffusers` at `5be7df9619b54f4e2667b2755bc6a756675b5cd7`. Original PTH loading was not enabled. Both experts/text encoder loaded in BF16, VAEFP32, directly on CUDA; no quantization/offload or repository Python.
+
+- Header estimate64.283GiB resident weights fits total and free VRAM. The conservative runtime estimate82313MiB exceeded90% of81176MiB free. **Explicit `--allow-risk` was used only for this runtime heuristic**; hard tensor-header/weight/disk checks stayed enforced. Small smoke preceded the larger clip.
+- The owned Qwen cache was removed before WAN, restoring143641MiB available disk. Full source checkpoint126.178GB downloaded; WAN loaded with22892MiB disk free.
+- **Codec smoke:**256²/5frames/4steps/16fps,4.023s including async polling/download. MP4H.264 decoded exactly5 frames,0.31s duration,29598bytes.
+- **Bounded quality sample:**512²/17frames/30steps/16fps,50.076s including polling/download. MP4H.264 decoded exactly17 frames,1.06s duration,105755bytes. These are individual end-to-end request times, not benchmarks.
+- All frames decoded; dimensions/FPS/count, non-flat color variance and nonidentical adjacent frames passed. First/middle/last quality frames were downloaded and visually inspected: coherent paper boat, water/ripples and reflections. **Boat color was white rather than requested red**, so prompt adherence is not perfect. Only a short bounded sample was tested, not longer/maximal clips or production quality.
+- Async202/job polling/content retrieval, busy503/no backlog, content-before-ready409, unknown job404, parameter/shape/frame/body limits, and URL-field rejection passed.
+- Device snapshots66485MiB loaded /69538MiB after generation (not peaks). Provider total/free/used counters reserve memory separately.
+- Cached stop/start passed; pre-restart job IDs returned404 as designed, and a fresh post-restart256²/5-frame/4-step job succeeded.
+- Test workers were stopped successfully; after CUDA teardown, observed device use returned to0MiB (81176MiB free). WAN cache/state/venv are retained stopped as`wan22-a14b-native`, localhost18032; Qwen's private test deployment/cache were retired to fit WAN on disk. Final disk22892MiB free. Instance1 remains running/billable; no instance resize/delete or operation on instance0.
+- Reusable opt-in client: `tests/live_video_check.py`; run using a video deployment's Python for its pinned imageio-ffmpeg/Pillow. Three CPU/fake-codec client tests bring the suite to58 tests; all58 passed on the actual Linux host with the CLI binary, alongside Go race/vet and Linux Go lifecycle checks. Fakes do not establish GPU/codec correctness by themselves.
 
 ## Thunder Docker blocker
 

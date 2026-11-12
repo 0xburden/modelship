@@ -224,7 +224,7 @@
       ],
       "notes": [
         "Full unquantized BF16 checkpoint, text-only HTTP input. No vision input, quantization or CPU offload.",
-        "Hybrid attention uses the modern Transformers implementation; GPU inference is not yet validated for this model.",
+        "Hybrid attention uses the modern Transformers implementation; Pinned text-only checkpoint GPU-tested on A100 80 GB with semantic/API and cached restart checks.",
         "The 27B checkpoint exceeds A6000 VRAM before cache/activations; weights-alone fit is a non-overridable preflight check."
       ]
     },
@@ -400,7 +400,7 @@
       "notes": [
         "Explicit official converted repository, not silently substituted for original Wan2.2 files. Safetensors-only, no repository Python.",
         "Bounded asynchronous MP4 jobs, one active generation, no backlog. No streaming, image-to-video, offload or quantization.",
-        "GPU inference remains unvalidated; both denoising experts are resident and A6000 deployment is blocked."
+        "Bounded A100 80 GB inference and H.264 export tested at 256/5 frames/4 steps and 512/17 frames/30 steps. Both experts are resident; A6000 is blocked. Conservative runtime budget requires explicit --allow-risk on the tested A100."
       ]
     }
   ]

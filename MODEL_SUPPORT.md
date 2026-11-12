@@ -33,12 +33,12 @@ Metadata/configuration was read at the revisions below. Sizes use decimal GB; th
 | Repository | Listed weight artifacts | Recipe / status | A6000 48 GiB considerations |
 | --- | ---: | --- | --- |
 | `google/gemma-4-E4B-it` | 15.99 GB | `gemma4-text` / experimental | GPU-tested text path. Full checkpoint has ~8B parameters despite the E4B effective-size name; text-only API initially. |
-| `Qwen/Qwen3.8-27B` | 55.56 GB | `qwen3.8-multimodal` / experimental | BF16 weights alone exceed 48 GiB. The full modern multimodal loader is implemented for text input on larger hardware. No quantization/offload; A6000 is hard-blocked. GPU inference unvalidated. |
+| `Qwen/Qwen3.8-27B` | 55.56 GB | `qwen3.8-multimodal` / experimental | BF16 weights alone exceed 48 GiB. The full modern multimodal loader is implemented for text input on larger hardware. No quantization/offload; A6000 is hard-blocked. Full text-only native inference/API/restart tested on A100 80 GB. |
 | `Qwen/Qwen-Image-2.1` | 33.12 GB | `qwen-image21` / experimental | Includes 17.53 GB text encoder, 14.23 GB image transformer, 1.35 GB VAE. Native generation (512/1024) and image-conditioned editing (512) GPU-tested; non-commercial `--research` acknowledgment required. |
 | `OpenMOSS-Team/MOSS-Image-SFT` | 27.20 GB | `moss-image` / experimental | Implemented with explicit `--trust-model-code`, one reviewed revision/three source hashes, BF16/FP32 components and CPU noise; native 512/1024 generation GPU-tested after approval. |
 | `Wan-AI/Wan2.2-T2V-A14B` | 126.18 GB | `wan22-t2v-native` / planned | Original PTH layout stays blocked. Explicitly select the official Diffusers conversion below; full resident weights still exceed A6000. |
 
-The official **`Wan-AI/Wan2.2-T2V-A14B-Diffusers`** conversion has an experimental safetensors-only video adapter (`wan22-t2v-diffusers`). Its source files total **126.18 GB** too, but the FP32 expert tensors load as BF16; disk bytes are not resident VRAM bytes. Both experts, the text encoder and FP32 VAE are counted. Real video GPU inference/codec validation is still pending on larger hardware. The original and converted repositories are never silently interchanged.
+The official **`Wan-AI/Wan2.2-T2V-A14B-Diffusers`** conversion has an experimental safetensors-only video adapter (`wan22-t2v-diffusers`). Its source files total **126.18 GB** too, but the FP32 expert tensors load as BF16; disk bytes are not resident VRAM bytes. Both experts, the text encoder and FP32 VAE are counted. Native dual-expert A100 80 GB inference and H.264 export have passed bounded 256²/5-frame and 512²/17-frame tests. The tested 80 GB configuration needs explicit `--allow-risk` for the conservative activation heuristic, not for weights fit. The original and converted repositories are never silently interchanged.
 
 Pinned inspection sources:
 
@@ -164,15 +164,23 @@ curl -sS http://127.0.0.1:8006/v1/videos/VIDEO_ID
 curl -f http://127.0.0.1:8006/v1/videos/VIDEO_ID/content -o clip.mp4
 ```
 
+A reusable opt-in API/codec client is also available from the repository. Run it using the deployment's Python so its pinned codec dependencies are available (it generates a small smoke plus a bounded 512²/17-frame clip):
+
+```sh
+~/.local/state/modelship/native/wan-video/venv/bin/python tests/live_video_check.py \
+  --port 8006 --output validation-artifacts/wan-live
+```
+
 Statuses: `running`, `succeeded`, `failed`. One active job, **no backlog**; busy returns 503. Bounds: 256–768 dimensions divisible by 16, frames `4k+1` <=49, <=`512*512*49` pixel-frames, 1–50 steps, 1–30 fps, 32 KiB request body. Defaults are 512²/17 frames/30 steps/16 fps. No user URLs or arbitrary fields are accepted.
 
-Exports are private MP4s, <=64 MiB each; retention <=8 jobs/256 MiB and one-hour expiry. At most two concurrent downloads. IDs/exports are ephemeral and removed on restart/shutdown. Graceful shutdown drains the worker; the CLI's forced stop can terminate a long job, with partial files cleaned at next startup. Failed-job responses are sanitized; they do not echo prompts, tokens or tracebacks. CPU fakes test the API and export boundary; **real video inference, encoding and quality remain unvalidated**.
+Exports are private MP4s, <=64 MiB each; retention <=8 jobs/256 MiB and one-hour expiry. At most two concurrent downloads. IDs/exports are ephemeral and removed on restart/shutdown. Graceful shutdown drains the worker; the CLI's forced stop can terminate a long job, with partial files cleaned at next startup. Failed-job responses are sanitized; they do not echo prompts, tokens or tracebacks. CPU fakes test the API and export boundary; **real A100 80 GB inference and H.264 encoding passed the bounded tests above**. Sampled quality frames were coherent with visible ripples/motion, but the requested red boat appeared white; this is not a general quality/prompt-adherence guarantee. Longer clips/maximal API bounds remain unvalidated.
 
 ## Remaining validation and optimizations
 
 - **Completed with explicit user approval:** Qwen Image 512/1024 generation, 512 image-conditioned editing, busy/validation and cached restart; MOSS 512/1024 generation and busy/validation. PNGs were visually inspected. Both retained demos were restored and smoke-tested afterward. MOSS code approval remains required for each new deployment.
-- Qwen3.8 and full WAN need larger GPU hardware; WAN also needs a substantially larger cache disk. Do not attempt full downloads on the current 100 GB instance.
-- Controlled peak-memory/performance measurements, broader prompts/contexts/hardware, failure/cancellation and crash/reboot behavior remain outstanding.
+- **Qwen3.8 completed on a separate A100 80 GB instance:** full BF16 loading, semantic/API checks and cached restart. It still cannot fit A6000. WAN generation/MP4 checks also passed on that GPU with a separate cache and explicit runtime-heuristic override; both checkpoints cannot coexist on the 150 GB test disk. Do not attempt full downloads on the previous 100 GB instance.
+- All five requested families now have pinned native inference checks: Gemma/Qwen text, Qwen Image generation/editing, MOSS generation and explicit official WAN conversion/video export. This is bounded model/hardware-specific validation, not general compatibility.
+- Controlled peak-memory/performance measurements, longer/maximal video clips, broader prompts/contexts/hardware, failure/cancellation and crash/reboot behavior remain outstanding.
 - Explicitly versioned quantization/offload and LoRA composition remain later work; no automatic smaller-model fallback.
 
 ## LoRA tooling: subsequent phase, not implemented yet
