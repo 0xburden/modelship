@@ -183,7 +183,7 @@ func BuildPlan(m Model, h Host, o Options) (Plan, error) {
 	}
 	p.Warnings = append(p.Warnings, h.Warnings...)
 	if backend == "native" {
-		p.Warnings = append(p.Warnings, "Native backend reuses the selected Python installation's CUDA-enabled PyTorch through a system-site-packages venv; it never installs PyTorch. CUDA computation is checked before and after dependency installation.", "Native services bind directly to 127.0.0.1 and run as your user without a sandbox. They survive SSH disconnection, but do not auto-restart after crashes or reboot.")
+		p.Warnings = append(p.Warnings, "Native backend reuses the selected Python installation's CUDA-enabled PyTorch through a system-site-packages venv; it never installs PyTorch. CUDA computation is checked before and after dependency installation.", "Native services default to 127.0.0.1; explicit network listeners require bearer auth. Workers run as your user without a sandbox. They survive SSH disconnection, but do not auto-restart after crashes or reboot.")
 	}
 	if p.GPUMode == "auto" {
 		p.Warnings = append(p.Warnings, "GPU mode auto: try NVIDIA --gpus; fall back to CDI only for a recognized Thunder Compute rejection on a single-GPU host")

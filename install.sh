@@ -1,7 +1,13 @@
 #!/bin/sh
-# Configure this immutable release URL when publishing the bootstrap.
+# Release packaging replaces this marker with an immutable HTTPS URL.
+release_default='__MODELSHIP_RELEASE_BASE__'
 set -eu
-: "${MODELSHIP_RELEASE_BASE:?Set MODELSHIP_RELEASE_BASE to an HTTPS release directory (see README)}"
+if [ -z "${MODELSHIP_RELEASE_BASE:-}" ]; then
+  case "$release_default" in
+    https://*) MODELSHIP_RELEASE_BASE=$release_default ;;
+    *) echo "Source installer requires MODELSHIP_RELEASE_BASE; published installers already know their versioned URL." >&2; exit 1 ;;
+  esac
+fi
 case "$MODELSHIP_RELEASE_BASE" in https://*) ;; *) echo "Release base must use HTTPS" >&2; exit 1;; esac
 case "$(uname -s)/$(uname -m)" in
   Linux/x86_64) asset=modelship_linux_amd64 ;;
@@ -34,7 +40,14 @@ if ! cp "$tmp/$asset" "$stage" || ! chmod 0755 "$stage" || ! mv -f "$stage" "$de
   rm -f "$stage"; echo "Installation failed" >&2; exit 1
 fi
 echo "Installed $dest/modelship. Add $dest to PATH if needed." >&2
+# exec does not run EXIT traps: clean the download directory before launching.
+rm -rf "$tmp"
+trap - EXIT HUP INT TERM
 if [ "$#" -gt 0 ]; then
   exec "$dest/modelship" "$@"
 fi
+if [ -t 0 ] && [ -t 1 ]; then
+  exec "$dest/modelship" launch
+fi
 "$dest/modelship" version
+printf 'Installed without interactive setup. Run %s launch from a terminal, or use deploy MODEL --yes for automation.\n' "$dest/modelship" >&2

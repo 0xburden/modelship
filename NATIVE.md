@@ -11,6 +11,10 @@ Use this backend when host CUDA PyTorch works but Docker GPU passthrough does no
 - Network access for metadata, service dependencies, and any uncached weights.
 - No Docker, Container Toolkit, root privileges, or driver changes are required by the native backend itself.
 
+## Guided first deployment
+
+Run `modelship launch` (or download and run the published installer without arguments in a terminal). The wizard defaults to native when supported, checks existing CUDA PyTorch, and uses the shared pinned planner/deployer. It never installs drivers/PyTorch or stops another deployment. New API keys and deployment changes wait for final confirmation. Batch commands below remain supported.
+
 ## First deployment
 
 ```sh

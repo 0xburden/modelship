@@ -1,6 +1,7 @@
 FROM golang:1.24.4 AS build
 # Compatibility only: source-controlled releases/current is authoritative.
 ARG RELEASE_VERSION
+ARG MODELSHIP_PUBLISH_ORIGIN=https://modelship.bubuntu.xyz
 WORKDIR /src
 COPY go.mod ./
 COPY cmd/ ./cmd/
@@ -8,7 +9,7 @@ COPY internal/ ./internal/
 COPY scripts/ ./scripts/
 COPY releases/ ./releases/
 COPY install.sh ./
-RUN RELEASE_VERSION="$RELEASE_VERSION" sh scripts/build-release-site.sh
+RUN MODELSHIP_PUBLISH_ORIGIN="$MODELSHIP_PUBLISH_ORIGIN" RELEASE_VERSION="$RELEASE_VERSION" sh scripts/build-release-site.sh
 
 FROM nginx:1.28-alpine
 COPY --from=build /src/dist/site/ /usr/share/nginx/html/

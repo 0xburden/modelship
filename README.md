@@ -4,6 +4,28 @@ A GPU-first model deployment CLI: inspect a Hugging Face repository and the loca
 
 **Early MVP, not a universal model converter or production control plane.** Go handles orchestration; vLLM (Docker), Transformers (native text), and a small Python/Diffusers service perform inference. No agent API or backend is required.
 
+## Guided setup (v0.3.0-alpha.3+)
+
+On a supported NVIDIA server with the prerequisites already installed:
+
+```sh
+curl -fsSL https://modelship.bubuntu.xyz/v0.3.0-alpha.3/install.sh -o install.sh
+# Inspect the downloaded script from your trusted release before running it.
+sh install.sh
+```
+
+The published installer knows its immutable release URL; **no environment variable or model flags are needed**. It verifies/installs the CLI first, then launches guided setup when stdin/stdout are terminals. You can also run `~/.local/bin/modelship launch`, or simply `modelship` from a terminal after adding `~/.local/bin` to PATH.
+
+The wizard asks for the HF model page/revision, resolves it to an immutable commit, reads bounded headers, and offers the recipe's supported backend/task choices. Single-choice menus select themselves. It inspects GPUs, uses sensible ports (text8000/images8001/video18032), and collects Python/context/API-access/key-file settings. Model precision/loading policy stays fixed by the reviewed recipe: no inferred quantization/offload. Native mode checks existing CUDA PyTorch without installing or replacing it.
+
+You then review the exact shared deployment plan and a shell-quoted equivalent command. **No model tensor payload download, pip installation, deployment state or API key generation happens before final confirmation.** A tiny CUDA preflight and metadata/cache inspection are read-only setup checks. New keys are planned file references until approval, generated privately afterward, and never printed. Before final confirmation, cancellation/EOF/Ctrl-C does not deploy; existing keys/deployments are never overwritten/stopped implicitly. WAN conversion, experimental use, research-only licensing, custom-code consent and runtime-memory heuristic override each require their own explicit approval where applicable. Physical weights-fit/disk/policy blockers cannot be overridden.
+
+The wizard is just a UI over the existing inspector/planner/deployer; flag-based commands remain the automation interface. It deploys exactly the pinned plan shown, while launch still refreshes GPU-fit checks. After confirmation, leaving/interruption does not automatically stop a retained worker. Readiness, logs and deployment failures retain their existing lifecycle behavior; if a confirmed deployment fails, a newly generated key is retained privately rather than silently deleted. Downloading/installing the CLI itself is separate from deployment confirmation.
+
+**Terminal requirement:** download-and-run is the supported guided path. `curl | sh`, CI, redirected input/output and SSH without a TTY do not start interactive prompts. With no installer arguments those environments install only, print the version and show how to launch later. An explicit `launch` without terminal input/output fails fast; use `deploy MODEL ... --yes` or request an SSH TTY for interactive use. `--help` and `version` never prompt. No secrets are requested as terminal text; use `HF_TOKEN` in the environment for gated repositories and private file paths for API auth.
+
+This first iteration does not add new model adapters, capability-driven generation forms or soft generation-limit changes; those remain separate work.
+
 ## Supported scope
 
 - Linux **amd64**, NVIDIA; one selected GPU per deployment.
@@ -12,7 +34,7 @@ A GPU-first model deployment CLI: inspect a Hugging Face repository and the loca
 - Text: unquantized **safetensors** repositories with explicitly recognized architectures: Llama, Mistral, Qwen2, Qwen3, Gemma, Gemma2, Phi3 causal LMs. Exact architecture names and dependency profiles are in `internal/modelship/assets/recipes.json`.
 - Images: standard Diffusers repositories whose `model_index.json` declares **StableDiffusionPipeline**, **StableDiffusionXLPipeline**, or **FluxPipeline**. Both text-to-image and image-to-image are selectable; a deployment serves **one task**.
 - Text requires compute capability >=7.5 in Docker / >=7.0 natively; SD/SDXL >=7.0; FLUX >=8.0 (bfloat16).
-- **Feature-branch experimental/native:** Gemma 4 and Qwen3.8 text-only; Qwen Image 2.1 generation/editing; explicitly approved/hash-pinned MOSS images; bounded WAN video via an explicitly selected official Diffusers conversion. These need `--experimental` and model-specific resource/license/code prerequisites. See [MODEL_SUPPORT.md](MODEL_SUPPORT.md) for validation status; unvalidated adapters are not GPU-support guarantees.
+- **Experimental/native:** Gemma 4 and Qwen3.8 text-only; Qwen Image 2.1 generation/editing; explicitly approved/hash-pinned MOSS images; bounded WAN video via an explicitly selected official Diffusers conversion. These need `--experimental` and model-specific resource/license/code prerequisites. See [MODEL_SUPPORT.md](MODEL_SUPPORT.md) for validation status; unvalidated adapters are not GPU-support guarantees.
 
 Not yet supported: GGUF, single-file image checkpoints, variant-only image repositories, adapters/LoRAs, AWQ/GPTQ/bitsandbytes, arbitrary remote model code, original WAN PTH checkpoints, FLUX.2, multi-GPU sharding, automatic quantization/offload, or arbitrary model architectures. Matching an architecture is a compatibility filter, **not** proof that every repository variant will load.
 
@@ -34,7 +56,7 @@ docker run --rm -v "$PWD:/src" -w /src golang:1.24.4 \
 
 The Docker command builds for the container's platform. Use `scripts/release.sh` for a Linux amd64 release from any supported Go build host.
 
-## Recipe discovery (feature branch)
+## Recipe discovery
 
 The `v0.3.0-alpha.1` release adds host-independent `modelship catalog` and `modelship inspect MODEL [--json]`, isolated dependency profiles, and experimental adapters for the requested model families. Weights-alone VRAM is checked from bounded safetensors headers, separately from download bytes and runtime heuristics. Research-only licensing, reviewed repository-code consent, explicit WAN format selection, and hardware limits remain enforced; nothing is silently substituted or quantized. See **[MODEL_SUPPORT.md](MODEL_SUPPORT.md)** for the requested-model matrix and LoRA roadmap. These additions are not in the published `v0.2.0-alpha.1`.
 
@@ -198,11 +220,11 @@ Image service: `/health`, `/docs`. Image generation is GPU-intensive; smoke-test
 Build immutable release assets:
 
 ```sh
-VERSION=v0.2.0 sh scripts/release.sh
+VERSION=v0.3.0-alpha.3 sh scripts/release.sh
 # dist/modelship_linux_amd64, dist/install.sh, dist/SHA256SUMS
 ```
 
-Host all three over HTTPS at a versioned path, e.g. **your own** `https://deploy.example.com/v0.2.0/`, using a static web server on Dokploy, or attach them to a GitHub release. Do not publish a moving "latest" directory as if it were immutable. Public releases are hosted at `https://modelship.bubuntu.xyz/`; the current source-controlled version is in `releases/current`.
+Release packaging embeds `MODELSHIP_PUBLISH_ORIGIN/VERSION` in the served installer (default origin `https://modelship.bubuntu.xyz`); set `MODELSHIP_PUBLISH_ORIGIN=https://YOUR_HOST` for another HTTPS origin. `MODELSHIP_RELEASE_BASE` remains an optional install-time override. The source `install.sh` is a template and still requires that override if run directly before packaging. Host all three over HTTPS at a versioned path, e.g. **your own** `https://deploy.example.com/v0.2.0/`, using a static web server on Dokploy, or attach them to a GitHub release. Do not publish a moving "latest" directory as if it were immutable. Public releases are hosted at `https://modelship.bubuntu.xyz/`; the current source-controlled version is in `releases/current`.
 
 On the fresh server:
 
@@ -228,14 +250,14 @@ Checksums from the same release host detect corruption, **not a compromised host
 
 ### Optional Dokploy static image
 
-Deploy `Dockerfile.releases` from this Git repository in Dokploy and route an HTTPS domain to container port 80. The multi-stage Dockerfile builds the Linux binary, installer, and checksums itself; `dist/` does not need to be committed or uploaded. The tracked `releases/current` file selects the version (`v0.3.0-alpha.2`); the old `RELEASE_VERSION` build argument is ignored with a warning. The build preserves checksum-pinned prior releases and refuses to overwrite an existing version with different bytes. Deploy a reviewed commit/tag. The service only serves static assets, not model requests or credentials. See **[DEPLOYMENT.md](DEPLOYMENT.md)** for the walkthrough.
+Deploy `Dockerfile.releases` from this Git repository in Dokploy and route an HTTPS domain to container port 80. The multi-stage Dockerfile builds the Linux binary, installer, and checksums itself; `dist/` does not need to be committed or uploaded. The tracked `releases/current` file selects the version (`v0.3.0-alpha.3`); the old `RELEASE_VERSION` build argument is ignored with a warning. The build preserves checksum-pinned prior releases and refuses to overwrite an existing version with different bytes. Deploy a reviewed commit/tag. The service only serves static assets, not model requests or credentials. See **[DEPLOYMENT.md](DEPLOYMENT.md)** for the walkthrough.
 
 ## Install WAN from the versioned release
 
 On Linux x86_64 with an idle A10080GB-class GPU, Python>=3.11 and existing working CUDA PyTorch>=2.9, plus sufficient free disk (roughly150GB recommended):
 
 ```sh
-export MODELSHIP_RELEASE_BASE=https://modelship.bubuntu.xyz/v0.3.0-alpha.2
+export MODELSHIP_RELEASE_BASE=https://modelship.bubuntu.xyz/v0.3.0-alpha.3
 curl -fsSL "$MODELSHIP_RELEASE_BASE/install.sh" -o /tmp/modelship-install.sh
 # Inspect this trusted script before running it.
 sh /tmp/modelship-install.sh deploy Wan-AI/Wan2.2-T2V-A14B \

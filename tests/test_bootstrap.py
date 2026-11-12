@@ -1,5 +1,6 @@
 import hashlib
 import os
+import pty
 from pathlib import Path
 import subprocess
 import tempfile
@@ -80,6 +81,56 @@ cp "$FIXTURE_RELEASE/$(basename "$url")" "$out"
     def test_rejects_unsupported_platform(self):
         self.executable("uname", "#!/bin/sh\necho Darwin\n")
         self.assertNotEqual(self.run_installer().returncode, 0)
+
+    def recording_binary(self):
+        artifact = b'#!/bin/sh\nprintf "%s\\n" "$*" > "$FIXTURE_ARGS"\nprintf "fixture-version\\n"\n'
+        (self.release/'modelship_linux_amd64').write_bytes(artifact)
+        digest=hashlib.sha256(artifact).hexdigest()
+        (self.release/'SHA256SUMS').write_text(f'{digest}  modelship_linux_amd64\n')
+        self.env['FIXTURE_ARGS']=str(self.root/'arguments')
+
+    def test_noninteractive_default_is_install_only_and_never_prompts(self):
+        self.recording_binary()
+        result=self.run_installer()
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual((self.root/'arguments').read_text().strip(),'version')
+        self.assertIn('from a terminal',result.stderr)
+
+    def test_argument_forwarding_and_download_cleanup_before_exec(self):
+        self.recording_binary()
+        downloads=self.root/'downloads'
+        downloads.mkdir()
+        self.env['TMPDIR']=str(downloads)
+        result=self.run_installer('deploy','org/model','--yes')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual((self.root/'arguments').read_text().strip(),'deploy org/model --yes')
+        self.assertEqual(list(downloads.iterdir()),[])
+
+    def test_interactive_default_launches_wizard(self):
+        self.recording_binary()
+        master,slave=pty.openpty()
+        try:
+            process=subprocess.Popen(['sh',str(ROOT/'install.sh')],env=self.env,stdin=slave,stdout=slave,stderr=slave)
+            self.assertEqual(process.wait(timeout=15),0)
+        finally:
+            os.close(master);os.close(slave)
+        self.assertEqual((self.root/'arguments').read_text().strip(),'launch')
+
+    def test_published_installer_has_baked_versioned_url_but_env_override_still_works(self):
+        baked=self.root/'install-published.sh'
+        baked.write_text((ROOT/'install.sh').read_text().replace('__MODELSHIP_RELEASE_BASE__','https://fixture.example/v9.8.7'))
+        self.env.pop('MODELSHIP_RELEASE_BASE')
+        result=subprocess.run(['sh',str(baked),'version'],env=self.env,text=True,capture_output=True,timeout=15)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.env['MODELSHIP_RELEASE_BASE']='http://not-trusted.example'
+        result=subprocess.run(['sh',str(baked),'version'],env=self.env,text=True,capture_output=True,timeout=15)
+        self.assertNotEqual(result.returncode,0)
+
+    def test_source_installer_without_explicit_base_fails_clearly(self):
+        self.env.pop('MODELSHIP_RELEASE_BASE')
+        result=self.run_installer('version')
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('Source installer requires',result.stderr)
 
 
 if __name__ == "__main__":

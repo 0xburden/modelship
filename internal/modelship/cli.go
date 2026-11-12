@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"sort"
@@ -17,6 +18,7 @@ import (
 const help = `modelship — NVIDIA model deployment (Linux amd64)
 
 Commands:
+  launch                             Guided model setup (also the interactive default)
   catalog [--json]                    List implemented, experimental, and planned recipes
   inspect MODEL [--json]              Inspect metadata without a GPU or model download
   doctor                             Inspect NVIDIA GPUs and Docker
@@ -56,11 +58,20 @@ headers check weights-alone VRAM; activation/cache estimates are still heuristic
 func Run(args []string, version string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
+	if len(args) == 0 {
+		if terminalFile(os.Stdin) && terminalFile(os.Stdout) {
+			return launchCommand(ctx, nil)
+		}
+		fmt.Print(help)
+		return nil
+	}
+	if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		fmt.Print(help)
 		return nil
 	}
 	switch args[0] {
+	case "launch":
+		return launchCommand(ctx, args[1:])
 	case "__native-run":
 		if len(args) != 3 {
 			return fmt.Errorf("internal native-run requires name and run ID")
@@ -211,15 +222,10 @@ func planCommand(ctx context.Context, action string, args []string) error {
 	if err != nil {
 		return err
 	}
-	hub := NewHub()
-	hub.Token = os.Getenv("HF_TOKEN")
-	model, err := hub.Inspect(ctx, id, o.Revision)
+	model, err := inspectForPlan(ctx, id, o.Revision)
 	if err != nil {
 		return err
 	}
-	// Errors are recorded on Model and become non-overridable plan blockers,
-	// including in JSON output; never silently replace failed metadata with a guess.
-	_ = hub.InspectWeightMetadata(ctx, &model)
 	if o.Backend == "native" {
 		InspectModelCache(&host, model)
 	}
@@ -263,52 +269,66 @@ func printJSON(v any) error {
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
 }
-func printPlan(p Plan) {
+func printPlan(p Plan) { writePlan(os.Stdout, p) }
+func writePlan(w io.Writer, p Plan) {
 	if p.RequestedModel != "" {
-		fmt.Printf("Requested:   %s\nExplicit weights repository follows:\n", p.RequestedModel)
+		fmt.Fprintf(w, "Requested:   %s\nExplicit weights repository follows:\n", p.RequestedModel)
 	}
-	fmt.Printf("Model:       %s\nRevision:    %s\nTask:        %s\nRuntime:     %s (%s)\nGPU:         %d · %s · %d MiB free\nWeights:     %d files · %.2f GiB (plus supporting files)\nEst. VRAM:   %d MiB\nEndpoint:    http://127.0.0.1:%d\nContainer:   %s\n",
+	fmt.Fprintf(w, "Model:       %s\nRevision:    %s\nTask:        %s\nRuntime:     %s (%s)\nGPU:         %d · %s · %d MiB free\nWeights:     %d files · %.2f GiB (plus supporting files)\nEst. VRAM:   %d MiB\nEndpoint:    http://127.0.0.1:%d\nDeployment:  %s\n",
 		p.Model, p.Revision, p.Task, p.Runtime, p.Image, p.GPU.Index, p.GPU.Name, p.GPU.FreeMiB, len(p.Files), float64(p.WeightBytes)/(1024*1024*1024), p.EstimatedVRAMMiB, p.Port, p.Name)
-	fmt.Printf("Weight VRAM: %.2f GiB (%s); fits total=%t, fits free=%t\n", float64(p.WeightResidentBytes)/(1024*1024*1024), p.WeightMemoryBasis, p.WeightsFitTotal, p.WeightsFitFree)
+	fmt.Fprintf(w, "Weight VRAM: %.2f GiB (%s); fits total=%t, fits free=%t\n", float64(p.WeightResidentBytes)/(1024*1024*1024), p.WeightMemoryBasis, p.WeightsFitTotal, p.WeightsFitFree)
 	if p.ModelCacheDir != "" {
-		fmt.Printf("Model cache: %s\n", p.ModelCacheDir)
+		fmt.Fprintf(w, "Model cache: %s\n", p.ModelCacheDir)
 	}
 	if p.Context > 0 {
-		fmt.Printf("Context:     %d\n", p.Context)
+		fmt.Fprintf(w, "Context:     %d\n", p.Context)
 	}
-	fmt.Printf("Backend:     %s\n", p.Backend)
+	fmt.Fprintf(w, "Backend:     %s\n", p.Backend)
 	if p.Backend == "native" {
-		fmt.Printf("Listen:      %s; bearer authentication=%t\n", nativeListen(p), p.APIKeyFile != "")
+		fmt.Fprintf(w, "Listen:      %s; bearer authentication=%t\n", nativeListen(p), p.APIKeyFile != "")
 	}
 	if p.RecipeID != "" {
-		fmt.Printf("Recipe:      %s (%s), %s\n", p.RecipeID, p.RecipeStatus, p.DType)
+		fmt.Fprintf(w, "Recipe:      %s (%s), %s\n", p.RecipeID, p.RecipeStatus, p.DType)
 	}
 	if p.Research {
-		fmt.Println("Use:         non-commercial research/evaluation acknowledged; review exact model terms")
+		fmt.Fprintln(w, "Use:         non-commercial research/evaluation acknowledged; review exact model terms")
 	}
 	if p.CodeRevision != "" {
-		fmt.Printf("Code review: %s; execution approved=%t (runs as your user, no sandbox)\n", p.CodeRevision, p.TrustModelCode)
+		fmt.Fprintf(w, "Code review: %s; execution approved=%t (runs as your user, no sandbox)\n", p.CodeRevision, p.TrustModelCode)
 		names := make([]string, 0, len(p.CodeHashes))
 		for name := range p.CodeHashes {
 			names = append(names, name)
 		}
 		sort.Strings(names)
 		for _, name := range names {
-			fmt.Printf("  SHA-256 %s  %s\n", p.CodeHashes[name], name)
+			fmt.Fprintf(w, "  SHA-256 %s  %s\n", p.CodeHashes[name], name)
 		}
 	}
 	if p.Python != "" {
-		fmt.Printf("Base Python: %s\n", p.Python)
+		fmt.Fprintf(w, "Base Python: %s\n", p.Python)
 	}
-	fmt.Printf("GPU access:  %s\n", p.GPUMode)
-	fmt.Println("Weight files:")
+	fmt.Fprintf(w, "GPU access:  %s\n", p.GPUMode)
+	fmt.Fprintln(w, "Weight files:")
 	for _, f := range p.Files {
-		fmt.Println("  " + f)
+		fmt.Fprintln(w, "  "+terminalText(f))
 	}
-	for _, w := range p.Warnings {
-		fmt.Println("Warning: " + w)
+	for _, warning := range p.Warnings {
+		fmt.Fprintln(w, "Warning: "+terminalText(warning))
 	}
 	for _, b := range p.Blockers {
-		fmt.Println("BLOCKED: " + b)
+		fmt.Fprintln(w, "BLOCKED: "+terminalText(b))
 	}
+}
+
+// Shared metadata/weight inspection for both guided and flag-based planning.
+func inspectForPlan(ctx context.Context, id, revision string) (Model, error) {
+	hub := NewHub()
+	hub.Token = os.Getenv("HF_TOKEN")
+	model, err := hub.Inspect(ctx, id, revision)
+	if err != nil {
+		return model, err
+	}
+	// Record errors as non-overridable blockers rather than silently guessing.
+	_ = hub.InspectWeightMetadata(ctx, &model)
+	return model, nil
 }
