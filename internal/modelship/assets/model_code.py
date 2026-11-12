@@ -57,6 +57,7 @@ def load_moss_pipeline(model, revision, dtypes):
         repo_id=model, revision=revision,
         allow_patterns=weights + list(CODE_PATHS) + [
             "*.json", "tokenizer/*.txt", "tokenizer/*.model", "tokenizer/*.tiktoken",
+            "tokenizer/chat_template.jinja",
         ],
     ))
     for name, digest in manifest.items():

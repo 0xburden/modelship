@@ -36,7 +36,11 @@ def main():
             with urllib.request.urlopen(req, timeout=600) as response:
                 return response.status, json.load(response), time.monotonic() - start
         except urllib.error.HTTPError as exc:
-            return exc.code, json.load(exc), time.monotonic() - start
+            try:
+                result = json.load(exc)
+            except (ValueError, UnicodeDecodeError):
+                result = {"detail": "non-JSON error response; inspect private service log"}
+            return exc.code, result, time.monotonic() - start
 
     def check(label, path, body=None, status=200):
         actual, result, elapsed = request(path, body)

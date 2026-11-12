@@ -19,7 +19,7 @@ CALLS = []
 
 class FakePipeline:
     def __init__(self):
-        self.vae = types.SimpleNamespace(enable_slicing=lambda: None, enable_tiling=lambda: None)
+        self.vae = types.SimpleNamespace(dtype="fp32", enable_slicing=lambda: None, enable_tiling=lambda: None)
 
     @classmethod
     def from_pretrained(cls, model, **kwargs):
@@ -28,6 +28,11 @@ class FakePipeline:
 
     def to(self, device):
         return self
+
+    def _encode_vae_image(self, image, generator):
+        assert image.dtype == self.vae.dtype, "conditioning image dtype must match VAE"
+        CALLS.append(("vae-encode", image.dtype, generator))
+        return image
 
     def set_progress_bar_config(self, **kwargs):
         pass
@@ -154,6 +159,21 @@ class ImageAPITests(unittest.TestCase):
         self.assertEqual(args["true_cfg_scale"], 1)
         self.assertNotIn("guidance_scale", args)
         self.assertNotIn("negative_prompt", args)
+
+    def test_qwen_edit_encoder_bridges_fp32_vae_and_bf16_transformer(self):
+        server.PIPELINE = "QwenImage21Pipeline"
+        class Tensor:
+            def __init__(self, dtype):
+                self.dtype = dtype
+            def to(self, *, dtype):
+                return Tensor(dtype)
+        with patch.dict(sys.modules, {"diffusers": types.SimpleNamespace(QwenImage21Pipeline=FakePipeline)}), patch.dict(os.environ, {"MODEL_RESEARCH": "true"}):
+            pipe = server.load_pipeline()
+            for dtype in ("bf16", "fp16"):
+                encoded = pipe._encode_vae_image(Tensor(dtype), "generator")
+                self.assertEqual(encoded.dtype, dtype)
+        self.assertEqual([call for call in CALLS if call[0] == "vae-encode"],
+                         [("vae-encode", "fp32", "generator")] * 2)
 
     def test_qwen_image_editing_uses_conditioning_without_strength(self):
         server.PIPELINE = "QwenImage21Pipeline"

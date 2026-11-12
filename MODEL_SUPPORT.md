@@ -34,8 +34,8 @@ Metadata/configuration was read at the revisions below. Sizes use decimal GB; th
 | --- | ---: | --- | --- |
 | `google/gemma-4-E4B-it` | 15.99 GB | `gemma4-text` / experimental | GPU-tested text path. Full checkpoint has ~8B parameters despite the E4B effective-size name; text-only API initially. |
 | `Qwen/Qwen3.8-27B` | 55.56 GB | `qwen3.8-multimodal` / experimental | BF16 weights alone exceed 48 GiB. The full modern multimodal loader is implemented for text input on larger hardware. No quantization/offload; A6000 is hard-blocked. GPU inference unvalidated. |
-| `Qwen/Qwen-Image-2.1` | 33.12 GB | `qwen-image21` / experimental | Includes 17.53 GB text encoder, 14.23 GB image transformer, 1.35 GB VAE. Dedicated generation/edit adapter; non-commercial `--research` acknowledgment. GPU inference pending. |
-| `OpenMOSS-Team/MOSS-Image-SFT` | 27.20 GB | `moss-image` / experimental | Implemented with explicit `--trust-model-code`, one reviewed revision/three source hashes, BF16/FP32 components, CPU noise. GPU inference pending. |
+| `Qwen/Qwen-Image-2.1` | 33.12 GB | `qwen-image21` / experimental | Includes 17.53 GB text encoder, 14.23 GB image transformer, 1.35 GB VAE. Native generation (512/1024) and image-conditioned editing (512) GPU-tested; non-commercial `--research` acknowledgment required. |
+| `OpenMOSS-Team/MOSS-Image-SFT` | 27.20 GB | `moss-image` / experimental | Implemented with explicit `--trust-model-code`, one reviewed revision/three source hashes, BF16/FP32 components and CPU noise; native 512/1024 generation GPU-tested after approval. |
 | `Wan-AI/Wan2.2-T2V-A14B` | 126.18 GB | `wan22-t2v-native` / planned | Original PTH layout stays blocked. Explicitly select the official Diffusers conversion below; full resident weights still exceed A6000. |
 
 The official **`Wan-AI/Wan2.2-T2V-A14B-Diffusers`** conversion has an experimental safetensors-only video adapter (`wan22-t2v-diffusers`). Its source files total **126.18 GB** too, but the FP32 expert tensors load as BF16; disk bytes are not resident VRAM bytes. Both experts, the text encoder and FP32 VAE are counted. Real video GPU inference/codec validation is still pending on larger hardware. The original and converted repositories are never silently interchanged.
@@ -135,7 +135,7 @@ modelship plan Wan-AI/Wan2.2-T2V-A14B --backend native --experimental \
 
 `QwenImage21Pipeline` serves generation and image-conditioned editing; do not use the SDXL AutoPipeline/strength contract. A separate deployment chooses `--task image-to-image` and `/v1/images/edits` with inline `image_b64` (RGBA preserved). Both tasks use the same pinned model weights/cache.
 
-Dimensions are 256–1024 and divisible by **32**. `guidance_scale` defaults to **1.0**, mapped to `true_cfg_scale`; negative prompts require a scale >1. `strength` is rejected, rather than ignored. Input conditioning resolution is explicitly bounded to the request area. Modern image prompts have a 4096-character limit. VAE is FP32, transformer/text encoder BF16; generation defaults to 28 steps (API cap 100), one request at a time. These bounds are not proof of peak-memory fit.
+Dimensions are 256–1024 and divisible by **32**. `guidance_scale` defaults to **1.0**, mapped to `true_cfg_scale`; negative prompts require a scale >1. `strength` is rejected, rather than ignored. Input conditioning resolution is explicitly bounded to the request area. The dedicated adapter bridges BF16 conditioning pixels into the FP32 VAE, then casts encoded latents back to BF16; this avoids the pinned upstream mixed-precision editing mismatch. Modern image prompts have a 4096-character limit. VAE is FP32, transformer/text encoder BF16; generation defaults to 28 steps (API cap 100), one request at a time. These bounds are not proof of peak-memory fit.
 
 ### MOSS source-execution boundary
 
@@ -149,7 +149,7 @@ Each SHA-256: `1dac1aca9feb1bfdfc727a401e4b67d61a505d3190706d1b7d2d784f88678b31`
 
 Source review found standard Torch/Diffusers/Transformers inference classes, no shell/exec or direct network helpers; the unused component-loading convenience method can call standard HF loaders. The runtime verifies the component index, downloads only selected safetensors/config/tokenizer files and these approved Python paths, then loads locally with no additional fetching. This is **not a security audit or sandbox**. Do not approve code on an untrusted/shared account. Different code revisions require a new review/manifest, not merely `--allow-risk`.
 
-Text-to-image only, multiples of **16**, guidance default **3.0**, BF16 transformer/text encoder and FP32 VAE, CPU FP32 initial noise. Text encoding is capped at **512 tokens** (long prompts are truncated by the upstream encoder); use compact prompts. GPU execution is not yet validated.
+Text-to-image only, multiples of **16**, guidance default **3.0**, BF16 transformer/text encoder and FP32 VAE, CPU FP32 initial noise. Text encoding is capped at **512 tokens** (long prompts are truncated by the upstream encoder); use compact prompts. The pinned checkpoint passed native 512/1024 generation and busy/validation checks on A6000 after explicit code approval.
 
 ### WAN video API
 
@@ -170,7 +170,7 @@ Exports are private MP4s, <=64 MiB each; retention <=8 jobs/256 MiB and one-hour
 
 ## Remaining validation and optimizations
 
-- Real Qwen Image generation/editing and MOSS GPU tests need sufficient **free** VRAM; do not stop existing services without approval. MOSS also needs explicit code-execution approval.
+- **Completed with explicit user approval:** Qwen Image 512/1024 generation, 512 image-conditioned editing, busy/validation and cached restart; MOSS 512/1024 generation and busy/validation. PNGs were visually inspected. Both retained demos were restored and smoke-tested afterward. MOSS code approval remains required for each new deployment.
 - Qwen3.8 and full WAN need larger GPU hardware; WAN also needs a substantially larger cache disk. Do not attempt full downloads on the current 100 GB instance.
 - Controlled peak-memory/performance measurements, broader prompts/contexts/hardware, failure/cancellation and crash/reboot behavior remain outstanding.
 - Explicitly versioned quantization/offload and LoRA composition remain later work; no automatic smaller-model fallback.

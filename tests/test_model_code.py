@@ -79,6 +79,9 @@ class ModelCodeTests(unittest.TestCase):
             with patch.object(policy, "EXPECTED_HASH", digest), patch.dict(os.environ, env), patch.dict(sys.modules, modules):
                 policy.load_moss_pipeline(policy.EXPECTED_REPO, policy.EXPECTED_REVISION, {"default": "bf16", "vae": "fp32"})
                 self.assertEqual([c[0] for c in calls], ["code", "code", "code", "snapshot", "load"])
+                snapshot_kwargs = next(call[1] for call in calls if call[0] == "snapshot")
+                self.assertIn("tokenizer/chat_template.jinja", snapshot_kwargs["allow_patterns"])
+                self.assertNotIn("*.py", snapshot_kwargs["allow_patterns"])
                 kwargs = calls[-1][1]
                 self.assertTrue(kwargs["local_files_only"])
                 self.assertTrue(kwargs["use_safetensors"])

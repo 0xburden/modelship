@@ -138,6 +138,40 @@ The updated `v0.3.0-recipes-dev.5` loader was also exercised on real hardware, n
 - The temporary deployment was stopped and uninstalled. The original `qwen-regression` / `gemma4-e4b-test` workers remained running; GPU memory returned to **21370 MiB used / 27770 MiB free**. Shared model cache and host PyTorch `2.12.1+cu130` were preserved.
 - The development test binary remains under the private validation directory, not installed over `~/.local/bin/modelship-dev`, and the published alpha release was not changed.
 
+## Approved image GPU validation: Qwen Image 2.1
+
+The user explicitly approved temporarily pausing/restoring `qwen-regression` and `gemma4-e4b-test`, and executing the reviewed pinned MOSS code. All tests remain on `feat/model-recipes`; no published release changes.
+
+Qwen Image uses revision `d26bb61231c349cf6b7896fa83353113880e1ba3`, BF16 transformer/text encoder and FP32 VAE, direct CUDA placement, research acknowledgment, and Diffusers 0.42.1 / Transformers 5.22.2. No host PyTorch replacement or model substitution.
+
+| Request | Shape / steps | Result | Single-request time |
+| --- | --- | --- | --- |
+| Text-to-image | 512² / 20 | HTTP 200 / valid PNG | 7.618 s |
+| Text-to-image | 1024² / 20 | HTTP 200 / valid PNG | 18.191 s |
+| Image-conditioned edit | 512² / 20 | HTTP 200 / valid PNG | 9.591 s |
+
+These are individual request timings, not benchmarks. Both generated images were downloaded and visually inspected: coherent watercolor observatories on mountains at sunset. The edit preserved the observatory/rock composition and changed the sunset to a dark starry sky, matching the prompt. Seed 42 for generation, 43 for editing.
+
+**A real editing bug was found and fixed**, rather than counted as an HTTP-only success. Upstream Diffusers 0.42.1 casts conditioning pixels to BF16 before calling a separately FP32 VAE, causing a convolution input/bias dtype mismatch. The dedicated local pipeline subclass now encodes/normalizes in VAE precision and casts encoded latents back to the incoming BF16 precision before transformer concatenation. A regression test covers both cast boundaries. The failed run stopped its test worker and successfully restored both demos before retrying. After the fix, both generation PNGs were byte-identical to the earlier successful outputs.
+
+Additional checks passed: wrong task 409; invalid dimensions/steps/long prompts/URL fields/unsupported strength/negative prompt at CFG 1 returned 422; concurrent generation 200/503; required inline image input; URL-as-base64 rejection; cached image-to-image deployment and stop/start readiness. Observed fixed-run device usage was 31626 MiB loaded / 32808 MiB after generation / 33320 MiB after editing, **snapshots, not peak memory**. No offload/quantization was used.
+
+Ignored evidence: `validation-artifacts/image-live-20261112-072826/` (initial/failing edit run) and `validation-artifacts/image-live-20261112-074424/` (fixed run), plus the matching directories under remote `~/modelship-validation/recipes-batch-dev4/`.
+
+### MOSS Image SFT and final restoration — passed
+
+After explicit user approval, `OpenMOSS-Team/MOSS-Image-SFT` at `f972bd4b4b9e3852133cc5da954d87bc32cd8fb9` passed real native inference using the reviewed code gate, BF16 transformer/text encoder, FP32 VAE, CPU noise generator, 512-token text cap, and guidance 3.0.
+
+- **512² / 20 steps:** HTTP 200, 11.671 s. **1024² / 20 steps:** HTTP 200, 29.205 s. Single-request timings, not benchmarks.
+- Both PNGs were downloaded and visually inspected: clear watercolor observatory/mountain/sunset scenes matching the prompt, not blank or corrupted.
+- Wrong endpoint/dimensions/steps/oversized prompt/URL fields rejected; concurrent requests returned 200/503 as intended.
+- The exact three approved Python files were SHA-256-verified before loading, and their cached bytes were independently checked afterward. Recorded approval/code revision matched the pinned checkpoint.
+- Pre-test source inspection found that the restricted snapshot whitelist omitted `tokenizer/chat_template.jinja`. It was added as tokenizer data (not a broad Python allowlist); a regression test verifies its inclusion. Real prompt encoding now passes with the bundled chat template.
+- Device-memory snapshots: **25976 MiB loaded / 32562 MiB after generation**, not peak memory. Existing host PyTorch remained **2.12.1+cu130**, same import path/package version, with pre/post CUDA checks passing.
+- All temporary image workers were stopped and uninstalled. **Both original demos were restored and CLI smoke-tested.** Final device snapshot: **21364 MiB used / 27776 MiB free**. No restore/cleanup errors.
+- Shared HF weights remain cached intentionally; no automatic cache eviction. Disk ended at **14549 MiB free** on the 100 GB instance. More large model downloads need additional space or deliberate cache management.
+- All **55 Python tests passed on Linux with the actual CLI binary**, including three fake-worker lifecycle integrations; the extra regression test covers the Qwen edit precision bridge. Go race tests/vet and Linux Go subprocess tests also pass. Qwen3.8/full WAN GPU inference and actual WAN encoding/quality still require larger hardware.
+
 ## Thunder Docker blocker
 
 Provider Docker rejects `--gpus` / `--runtime=nvidia`; its documented GPU flag is `--device nvidia.com/gpu=all`.

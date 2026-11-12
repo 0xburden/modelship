@@ -261,7 +261,7 @@ MODELSHIP_LIVE_TEST=1 go test ./internal/modelship -run TestLiveHubMetadata -v
 
 Those checks build plans for Qwen2.5-3B and SDXL against simulated GPU capacity; they are not hardware benchmarks.
 
-Native end-to-end CLI tests have passed on Thunder/A6000 for Qwen text and SDXL generation/editing; see **[VALIDATION.md](VALIDATION.md)** for exact scope, timings, and remaining checks. Before production, validate your own models/hardware, sustained load and failures, resource usage, and exposure controls. FLUX and Docker GPU inference remain unvalidated in this run.
+Native end-to-end CLI tests have passed on Thunder/A6000 for Qwen text, Gemma 4 text, SDXL generation/editing, Qwen Image 2.1 generation/editing, and explicitly approved pinned MOSS generation; see **[VALIDATION.md](VALIDATION.md)** for exact scope, timings, and remaining checks. Before production, validate your own models/hardware, sustained load and failures, resource usage, and exposure controls. FLUX and Docker GPU inference remain unvalidated in this run.
 
 ## Layout
 

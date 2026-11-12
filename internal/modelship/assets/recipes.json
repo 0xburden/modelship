@@ -251,7 +251,8 @@
       "notes": [
         "Count text encoder, image transformer, and VAE weights, not just the advertised 7B image component.",
         "Requires --research acknowledgment of non-commercial research/evaluation use under the pinned model license; no commercial-use authorization is granted.",
-        "One QwenImage21Pipeline handles generation and image-conditioned editing; strength is not supported. Default guidance is 1.0 and dimensions must be multiples of 32."
+        "One QwenImage21Pipeline handles generation and image-conditioned editing; strength is not supported. Default guidance is 1.0 and dimensions must be multiples of 32.",
+        "Native A6000 generation at 512/1024 and image-conditioned editing at 512 tested. The pinned adapter bridges FP32 VAE encoding and BF16 transformer latents; no strength-based editing."
       ],
       "native_loader": "qwen-image21",
       "min_python": "3.11",
@@ -326,7 +327,7 @@
       "notes": [
         "Requires separate --trust-model-code opt-in. Only the reviewed immutable revision and three SHA-256-verified source files are accepted.",
         "Repository Python executes as your user, without a sandbox; research use is not a custom-code security approval.",
-        "Mixed BF16 transformer/text encoder and FP32 VAE, CPU-generated initial noise. Text-to-image only; GPU validation pending."
+        "Mixed BF16 transformer/text encoder and FP32 VAE, CPU-generated initial noise. Text-to-image only; Pinned native checkpoint GPU-tested at 512/1024 on A6000 after explicit source-code approval."
       ]
     },
     {

@@ -91,7 +91,18 @@ def load_pipeline():
         if os.environ.get("MODEL_RESEARCH") != "true":
             raise RuntimeError("Qwen Image requires --research acknowledgment of non-commercial use")
         from diffusers import QwenImage21Pipeline
-        loader = QwenImage21Pipeline
+
+        class ModelshipQwenImage21Pipeline(QwenImage21Pipeline):
+            def _encode_vae_image(self, image, generator):
+                # Diffusers 0.42.1 casts conditioning pixels to the text/DiT
+                # dtype, even when the VAE is explicitly FP32. Encode in VAE
+                # precision, normalize there, then return latents in the input
+                # precision so concatenation cannot upcast the BF16 DiT input.
+                input_dtype = image.dtype
+                encoded = super()._encode_vae_image(image.to(dtype=self.vae.dtype), generator)
+                return encoded.to(dtype=input_dtype)
+
+        loader = ModelshipQwenImage21Pipeline
     elif PIPELINE == "MOSSImagePipeline":
         if TASK != "text-to-image":
             raise RuntimeError("MOSS only supports text-to-image")
