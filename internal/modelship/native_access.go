@@ -114,20 +114,30 @@ func authKeygenCommand(args []string) error {
 		}
 		*path = filepath.Join(base, "modelship", "api.key")
 	}
-	absolute, err := filepath.Abs(*path)
+	absolute, err := generateAPIKey(*path)
 	if err != nil {
 		return err
 	}
+	fmt.Printf("API key saved privately to %s (key value not printed).\n", absolute)
+	return nil
+}
+
+// Shared creation primitive; the wizard calls this only after final approval.
+func generateAPIKey(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
 	if err = privateDir(filepath.Dir(absolute)); err != nil {
-		return err
+		return "", err
 	}
 	key := make([]byte, 32)
 	if _, err = rand.Read(key); err != nil {
-		return err
+		return "", err
 	}
 	f, err := os.OpenFile(absolute, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
-		return fmt.Errorf("cannot create API key file; existing files are never overwritten")
+		return "", fmt.Errorf("cannot create API key file; existing files are never overwritten")
 	}
 	_, err = f.WriteString(base64.RawURLEncoding.EncodeToString(key) + "\n")
 	if err == nil {
@@ -139,10 +149,9 @@ func authKeygenCommand(args []string) error {
 	}
 	if err != nil {
 		_ = os.Remove(absolute)
-		return fmt.Errorf("could not write API key file")
+		return "", fmt.Errorf("could not write API key file")
 	}
-	fmt.Printf("API key saved privately to %s (key value not printed).\n", absolute)
-	return nil
+	return absolute, nil
 }
 func nativeClient(timeout time.Duration) *http.Client {
 	return &http.Client{Timeout: timeout, Transport: &http.Transport{Proxy: nil}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}

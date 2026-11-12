@@ -8,6 +8,8 @@ printf '%s\n' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-
 }
 base=${RELEASE_ARCHIVE_BASE:-https://modelship.bubuntu.xyz}
 case "$base" in https://*) ;; *) echo 'Release archive must use HTTPS' >&2; exit 1;; esac
+publish=${MODELSHIP_PUBLISH_ORIGIN:-$base}
+case "$publish" in https://*) ;; *) echo 'Publish origin must use HTTPS' >&2; exit 1;; esac
 if [ -n "${RELEASE_VERSION:-}" ]; then
   echo "RELEASE_VERSION build argument is deprecated and ignored; releases/current selects $version." >&2
 fi
@@ -19,7 +21,7 @@ fetch() {
     --proto '=https' --proto-redir '=https' --tlsv1.2 --header 'Cache-Control: no-cache' "$@"
 }
 # Refuse to publish different bytes at a version that already exists.
-status=$(fetch --output "$stage/published.sha256" --write-out '%{http_code}' "${base%/}/$version/SHA256SUMS")
+status=$(fetch --output "$stage/published.sha256" --write-out '%{http_code}' "${publish%/}/$version/SHA256SUMS")
 case "$status" in
   200) cmp -s dist/SHA256SUMS "$stage/published.sha256" || {
     echo "Refusing to overwrite published $version; bump releases/current." >&2; exit 1;

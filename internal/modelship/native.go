@@ -254,17 +254,8 @@ func DeployNative(ctx context.Context, p Plan, wait time.Duration) error {
 	if err != nil {
 		return err
 	}
-	if p.MinPython != "" {
-		var major, minor int
-		if _, err := fmt.Sscanf(p.MinPython, "%d.%d", &major, &minor); err != nil || !driverAtLeast(before.PythonVersion, major, minor) {
-			return fmt.Errorf("recipe %s requires Python >= %s; selected Python reports %q", p.RecipeID, p.MinPython, before.PythonVersion)
-		}
-	}
-	if p.MinTorch != "" {
-		var major, minor int
-		if _, err := fmt.Sscanf(p.MinTorch, "%d.%d", &major, &minor); err != nil || !driverAtLeast(before.Version, major, minor) {
-			return fmt.Errorf("recipe %s requires PyTorch >= %s; selected Python reports %q (Modelship will not replace host PyTorch)", p.RecipeID, p.MinTorch, before.Version)
-		}
+	if err = validateNativeTorch(p, before); err != nil {
+		return err
 	}
 	fmt.Printf("Native PyTorch: %s · CUDA %s · %s\n", before.Version, before.CUDA, before.GPU)
 	cfg.Torch = before
@@ -612,4 +603,20 @@ func SmokeNative(ctx context.Context, name string) error {
 	_, err = io.Copy(os.Stdout, io.LimitReader(resp.Body, 65536))
 	fmt.Println()
 	return err
+}
+
+func validateNativeTorch(p Plan, before TorchInfo) error {
+	if p.MinPython != "" {
+		var major, minor int
+		if _, err := fmt.Sscanf(p.MinPython, "%d.%d", &major, &minor); err != nil || !driverAtLeast(before.PythonVersion, major, minor) {
+			return fmt.Errorf("recipe %s requires Python >= %s; selected Python reports %q", p.RecipeID, p.MinPython, before.PythonVersion)
+		}
+	}
+	if p.MinTorch != "" {
+		var major, minor int
+		if _, err := fmt.Sscanf(p.MinTorch, "%d.%d", &major, &minor); err != nil || !driverAtLeast(before.Version, major, minor) {
+			return fmt.Errorf("recipe %s requires PyTorch >= %s; selected Python reports %q (Modelship will not replace host PyTorch)", p.RecipeID, p.MinTorch, before.Version)
+		}
+	}
+	return nil
 }
