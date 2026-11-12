@@ -275,3 +275,81 @@ func TestWizardReviewEscapesRemoteTerminalControlData(t *testing.T) {
 		t.Fatal("terminal control data emitted")
 	}
 }
+
+func TestWizardExplainsDefaultsWithoutChangingAcceptedValues(t *testing.T) {
+	d, calls, got := testWizardDeps(t, textFixture())
+	var inspectedRevision string
+	originalInspect := d.inspect
+	d.inspect = func(ctx context.Context, id, revision string) (Model, error) {
+		inspectedRevision = revision
+		return originalInspect(ctx, id, revision)
+	}
+	var wait time.Duration
+	originalDeploy := d.deploy
+	d.deploy = func(ctx context.Context, p Plan, duration time.Duration) error {
+		wait = duration
+		return originalDeploy(ctx, p, duration)
+	}
+	var out bytes.Buffer
+	if err := runWizard(context.Background(), strings.NewReader(textWizardInput("y")), &out, d); err != nil {
+		t.Fatal(err, out.String())
+	}
+	if *calls != 1 || inspectedRevision != "main" || got.Revision != strings.Repeat("a", 40) || got.Backend != "native" || got.GPU.Index != 0 || got.Name != "modelship" || got.Port != 8000 || got.Context != 4096 || got.Python != "python3" || got.Listen != "127.0.0.1" || got.APIKeyFile != "" || wait != 30*time.Minute {
+		t.Fatal("explanatory labels changed the actual defaults")
+	}
+	for _, hint := range []string{"Press Enter to accept the value in brackets", "default to No", "Upstream branch default", "current upstream branch", "Recommended backend", "not because Python/PyTorch has already been verified", "Detected default", "not the largest or best-fit GPU", "Detected task suggestion", "Naming preset", "not the HF repository name", "Recommended port preset", "not SSH", "Context window (tokens) [4096]", "conservative preset, not necessarily the model maximum", "Prompt + generated tokens", "PATH preset", "not a detected CUDA environment", "Safety default", "NOT your laptop/browser localhost", "Startup wait preset", "not a generation timeout", "no floating branch at deployment", "Context:     4096 tokens"} {
+		if !strings.Contains(out.String(), hint) {
+			t.Fatal("missing default explanation", hint)
+		}
+	}
+}
+func TestWizardContextHintUsesSameNestedConfigurationAsPlanner(t *testing.T) {
+	model := textFixture()
+	if hint := wizardContextHint(model); !strings.Contains(hint, "Model config advertises 8192 tokens") {
+		t.Fatal(hint)
+	}
+	model.Config.TextConfig = &ModelConfig{MaxPosition: 262144}
+	hint := wizardContextHint(model)
+	if !strings.Contains(hint, "Model config advertises 262144 tokens") || !strings.Contains(hint, "CLI range: 128–131072") || !strings.Contains(hint, "not a validated capacity") || strings.Contains(hint, "Model config advertises 8192") {
+		t.Fatal(hint)
+	}
+	model.Config.TextConfig = &ModelConfig{}
+	if hint = wizardContextHint(model); !strings.Contains(hint, "maximum was not available") || strings.Contains(hint, "advertises 8192") {
+		t.Fatal(hint)
+	}
+}
+func TestWizardNetworkAndKeyDefaultsAreExplainedWithoutSecretValues(t *testing.T) {
+	d, _, _ := testWizardDeps(t, textFixture())
+	key := fixtureAPIKey(t)
+	var out bytes.Buffer
+	input := strings.Join([]string{"org/model", "", "", "", "", "", "", "https-ingress", "existing", key, "", "n"}, "\n") + "\n"
+	if err := runWizard(context.Background(), strings.NewReader(input), &out, d); err == nil {
+		t.Fatal("decline accepted")
+	}
+	for _, hint := range []string{"Required authentication", "new creates a random private key only after approval", "Computed path", "not a detected existing key", "private 0600 file", "No provider URL/forwarding is created automatically"} {
+		if !strings.Contains(out.String(), hint) {
+			t.Fatal("missing auth explanation", hint)
+		}
+	}
+	if strings.Contains(out.String(), strings.Repeat("a", 43)) {
+		t.Fatal("private key value in explanation")
+	}
+}
+
+func TestWizardZeroWaitReviewExplainsWorkerContinues(t *testing.T) {
+	d, calls, _ := testWizardDeps(t, textFixture())
+	var wait time.Duration = -1
+	original := d.deploy
+	d.deploy = func(ctx context.Context, p Plan, duration time.Duration) error {
+		wait = duration
+		return original(ctx, p, duration)
+	}
+	input := strings.Join([]string{"org/model", "", "", "", "", "", "", "", "", "0", "y"}, "\n") + "\n"
+	var out bytes.Buffer
+	if err := runWizard(context.Background(), strings.NewReader(input), &out, d); err != nil {
+		t.Fatal(err, out.String())
+	}
+	if *calls != 1 || wait != 0 || !strings.Contains(out.String(), "Readiness wait: skipped (0)") || !strings.Contains(out.String(), "worker may still be downloading/loading") {
+		t.Fatal("zero wait became a generation/deployment timeout")
+	}
+}

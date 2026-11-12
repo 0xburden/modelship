@@ -9,12 +9,14 @@ A GPU-first model deployment CLI: inspect a Hugging Face repository and the loca
 On a supported NVIDIA server with the prerequisites already installed:
 
 ```sh
-curl -fsSL https://modelship.bubuntu.xyz/v0.3.0-alpha.3/install.sh -o install.sh
+curl -fsSL https://modelship.bubuntu.xyz/v0.3.0-alpha.4/install.sh -o install.sh
 # Inspect the downloaded script from your trusted release before running it.
 sh install.sh
 ```
 
 The published installer knows its immutable release URL; **no environment variable or model flags are needed**. It verifies/installs the CLI first, then launches guided setup when stdin/stdout are terminals. You can also run `~/.local/bin/modelship launch`, or simply `modelship` from a terminal after adding `~/.local/bin` to PATH.
+
+Press **Enter** to accept the value in brackets; y/N questions default to No. Explanations label defaults as upstream choices, detected suggestions, recipe-controlled settings, recommended presets, computed paths or safety choices. Context is in **tokens**, not output length; advertised context is metadata, not a tested GPU limit. The API port is on the **GPU server**, not SSH; local access is not your browser/laptop localhost. The readiness wait covers worker startup, not generation time. These explanations do not change the selected values or add questions.
 
 The wizard asks for the HF model page/revision, resolves it to an immutable commit, reads bounded headers, and offers the recipe's supported backend/task choices. Single-choice menus select themselves. It inspects GPUs, uses sensible ports (text8000/images8001/video18032), and collects Python/context/API-access/key-file settings. Model precision/loading policy stays fixed by the reviewed recipe: no inferred quantization/offload. Native mode checks existing CUDA PyTorch without installing or replacing it.
 
@@ -220,7 +222,7 @@ Image service: `/health`, `/docs`. Image generation is GPU-intensive; smoke-test
 Build immutable release assets:
 
 ```sh
-VERSION=v0.3.0-alpha.3 sh scripts/release.sh
+VERSION=v0.3.0-alpha.4 sh scripts/release.sh
 # dist/modelship_linux_amd64, dist/install.sh, dist/SHA256SUMS
 ```
 
@@ -250,14 +252,14 @@ Checksums from the same release host detect corruption, **not a compromised host
 
 ### Optional Dokploy static image
 
-Deploy `Dockerfile.releases` from this Git repository in Dokploy and route an HTTPS domain to container port 80. The multi-stage Dockerfile builds the Linux binary, installer, and checksums itself; `dist/` does not need to be committed or uploaded. The tracked `releases/current` file selects the version (`v0.3.0-alpha.3`); the old `RELEASE_VERSION` build argument is ignored with a warning. The build preserves checksum-pinned prior releases and refuses to overwrite an existing version with different bytes. Deploy a reviewed commit/tag. The service only serves static assets, not model requests or credentials. See **[DEPLOYMENT.md](DEPLOYMENT.md)** for the walkthrough.
+Deploy `Dockerfile.releases` from this Git repository in Dokploy and route an HTTPS domain to container port 80. The multi-stage Dockerfile builds the Linux binary, installer, and checksums itself; `dist/` does not need to be committed or uploaded. The tracked `releases/current` file selects the version (`v0.3.0-alpha.4`); the old `RELEASE_VERSION` build argument is ignored with a warning. The build preserves checksum-pinned prior releases and refuses to overwrite an existing version with different bytes. Deploy a reviewed commit/tag. The service only serves static assets, not model requests or credentials. See **[DEPLOYMENT.md](DEPLOYMENT.md)** for the walkthrough.
 
 ## Install WAN from the versioned release
 
 On Linux x86_64 with an idle A10080GB-class GPU, Python>=3.11 and existing working CUDA PyTorch>=2.9, plus sufficient free disk (roughly150GB recommended):
 
 ```sh
-export MODELSHIP_RELEASE_BASE=https://modelship.bubuntu.xyz/v0.3.0-alpha.3
+export MODELSHIP_RELEASE_BASE=https://modelship.bubuntu.xyz/v0.3.0-alpha.4
 curl -fsSL "$MODELSHIP_RELEASE_BASE/install.sh" -o /tmp/modelship-install.sh
 # Inspect this trusted script before running it.
 sh /tmp/modelship-install.sh deploy Wan-AI/Wan2.2-T2V-A14B \

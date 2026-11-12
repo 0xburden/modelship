@@ -236,3 +236,21 @@ func TestWANConvertedRepositoryIsOnlyExplicitlySelected(t *testing.T) {
 		}
 	}
 }
+
+func TestGemma4VariantUsesExistingFamilyMatcherWithoutRepositoryWhitelist(t *testing.T) {
+	// Synthetic metadata copied from the known Gemma fixture. This checks only
+	// family matching, not this community repository's actual files or inference.
+	model := targetFixture(t, "google/gemma-4-E4B-it")
+	model.Hub.ID = "llmfan46/gemma-4-E4B-it-ultra-uncensored-heretic"
+	model.Hub.SHA = strings.Repeat("c", 40)
+	recipe, known, err := findRecipe(model)
+	if err != nil || !known || recipe.ID != "gemma4-text" || recipe.Status != "experimental" {
+		t.Fatal("compatible family matching regressed", err)
+	}
+	if contains(recipe.Repositories, model.Hub.ID) {
+		t.Fatal("test must exercise architecture matching, not a new allowlist")
+	}
+	if err = validateRecipeShape(recipe, model); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -68,6 +68,12 @@ type wizardLine struct {
 	err  error
 }
 
+// Explain a default's provenance without decorating the actual input value or
+// adding another question. A bracketed value remains exactly what Enter accepts.
+func (w *wizardUI) explain(source, detail string) {
+	fmt.Fprintf(w.out, "  %s — %s\n", source, detail)
+}
+
 func (w *wizardUI) ask(label, fallback string, valid func(string) error) (string, error) {
 	for {
 		if err := w.ctx.Err(); err != nil {
@@ -110,7 +116,7 @@ func (w *wizardUI) ask(label, fallback string, valid func(string) error) (string
 }
 func (w *wizardUI) choose(label string, choices []string, fallback string) (string, error) {
 	if len(choices) == 1 {
-		fmt.Fprintf(w.out, "%s: %s (only supported choice)\n", label, choices[0])
+		fmt.Fprintf(w.out, "%s: %s (only supported choice; selected automatically)\n", label, choices[0])
 		return choices[0], nil
 	}
 	return w.ask(label+" ("+strings.Join(choices, " / ")+")", fallback, func(value string) error {
@@ -194,7 +200,8 @@ func defaultWizardKey(name string) (string, error) {
 	return filepath.Join(base, "modelship", name+".key"), nil
 }
 func (w *wizardUI) access(o *Options) (bool, error) {
-	fmt.Fprintln(w.out, "Local access is server/SSH-only. Choose https-ingress for a provider URL such as Thunder HTTPS forwarding; it requires an API key.")
+	fmt.Fprintln(w.out, "local = GPU-server loopback or SSH tunnel, NOT your laptop/browser localhost. https-ingress = network listener behind a provider HTTPS URL, such as Thunder forwarding.")
+	w.explain("Safety default", "local keeps the worker private (127.0.0.1). https-ingress requires bearer auth; it does not configure provider forwarding or install TLS.")
 	choice, err := w.choose("API access", []string{"local", "https-ingress"}, "local")
 	if err != nil {
 		return false, err
@@ -207,6 +214,11 @@ func (w *wizardUI) access(o *Options) (bool, error) {
 		defaultKey = "new"
 		fmt.Fprintln(w.out, "Network access requires bearer auth and trusted HTTPS ingress. Raw HTTP is not encrypted; no provider forwarding is changed automatically.")
 	}
+	if choice == "local" {
+		w.explain("Safety default", "none means no bearer key on this private loopback listener; choose new or existing if you also want local API authentication.")
+	} else {
+		w.explain("Required authentication", "new creates a random private key only after approval; existing reuses a private key FILE. Neither option prints its value.")
+	}
 	keyChoice, err := w.choose("API key", choices, defaultKey)
 	if err != nil || keyChoice == "none" {
 		return false, err
@@ -215,7 +227,8 @@ func (w *wizardUI) access(o *Options) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	path, err := w.ask("Private key FILE path (never paste a key value)", fallback, func(value string) error {
+	w.explain("Computed path", "XDG_CONFIG_HOME (or ~/.config) + modelship/deployment-name.key; this is not a detected existing key. New files are created only after approval and are never overwritten; existing must already be a private 0600 file.")
+	path, err := w.ask("Private key FILE path on this server (never paste a key value)", fallback, func(value string) error {
 		if apiKeyPattern.MatchString(value) {
 			return fmt.Errorf("That looks like a key value; enter the private FILE path instead")
 		}
@@ -239,6 +252,7 @@ func (w *wizardUI) access(o *Options) (bool, error) {
 func runWizard(ctx context.Context, input io.Reader, output io.Writer, d wizardDeps) error {
 	w := wizardUI{ctx: ctx, in: bufio.NewReaderSize(input, 8193), out: output}
 	fmt.Fprintln(output, "Modelship — guided model setup\nInspect → choose → review → deploy. No model tensor payloads, installs or keys before final confirmation.\nUse HF_TOKEN in your environment for gated/private repositories; never paste credentials here.")
+	fmt.Fprintln(output, "Press Enter to accept the value in brackets. Type a value to change it; y/N questions default to No. A single supported choice is selected automatically.\nDefaults below are labeled as detected, recipe-controlled, recommended presets, or safety choices—not promises of hardware capacity.")
 	requested, err := w.ask("Hugging Face model page or org/repo", "", func(value string) error {
 		if strings.HasPrefix(value, "hf_") && len(value) > 25 {
 			return fmt.Errorf("Enter a model page, not a credential; use HF_TOKEN in your environment")
@@ -272,7 +286,12 @@ func runWizard(ctx context.Context, input io.Reader, output io.Writer, d wizardD
 			defaultRevision = r.CodeRevision
 		}
 	}
-	revision, err := w.ask("Model revision (resolved to an immutable commit)", defaultRevision, func(v string) error {
+	if defaultRevision == "main" {
+		w.explain("Upstream branch default", "main means the repository's current upstream branch, not a fixed or locally tested version. It is resolved once now; review/deployment use the exact pinned commit SHA.")
+	} else {
+		w.explain("Reviewed recipe pin", "This custom-code recipe defaults to its reviewed immutable commit, not the latest upstream branch. Source-code approval is still separate.")
+	}
+	revision, err := w.ask("Model revision (branch, tag or commit)", defaultRevision, func(v string) error {
 		if v == "" || len(v) > 200 {
 			return fmt.Errorf("Enter a revision name or commit")
 		}
@@ -313,7 +332,13 @@ func runWizard(ctx context.Context, input io.Reader, output io.Writer, d wizardD
 	if contains(recipe.Backends, "native") {
 		backendDefault = "native"
 	}
+	w.explain("Recipe-controlled setting", "Default compute dtype is "+recipe.DType+" for this adapter (component overrides may apply); this is not an auto-fit selection. No automatic quantization or CPU offload is enabled.")
 	fmt.Fprintln(output, "Native uses existing working CUDA PyTorch without replacing it. Docker requires your provider's supported local GPU runtime.")
+	if backendDefault == "native" {
+		w.explain("Recommended backend", "native is the preset because this recipe supports it—not because Python/PyTorch has already been verified. The CUDA preflight checks that later.")
+	} else {
+		w.explain("Recipe default", "Backend choices come from this adapter's supported paths, not automatic proof that the host runtime is configured.")
+	}
 	backend, err := w.choose("Backend", recipe.Backends, backendDefault)
 	if err != nil {
 		return err
@@ -333,6 +358,7 @@ func runWizard(ctx context.Context, input io.Reader, output io.Writer, d wizardD
 		fmt.Fprintf(output, "GPU %d: %s — %d/%d MiB free\n", g.Index, strconv.QuoteToASCII(g.Name), g.FreeMiB, g.TotalMiB)
 		gpuChoices = append(gpuChoices, strconv.Itoa(g.Index))
 	}
+	w.explain("Detected default", "The first GPU returned by discovery, not the largest or best-fit GPU. MiB are binary memory units; free VRAM is a snapshot and will be rechecked before launch.")
 	gpu, err := w.choose("GPU index", gpuChoices, gpuChoices[0])
 	if err != nil {
 		return err
@@ -342,11 +368,15 @@ func runWizard(ctx context.Context, input io.Reader, output io.Writer, d wizardD
 	taskDefault := recipe.Tasks[0]
 	if contains(recipe.Tasks, model.Hub.PipelineTag) {
 		taskDefault = model.Hub.PipelineTag
+		w.explain("Detected task suggestion", "Hugging Face metadata suggests this task, and the adapter permits it; only supported choices are shown.")
+	} else {
+		w.explain("Recipe task default", "The adapter's first supported task, not a guessed capability. A deployment serves the selected task only.")
 	}
 	o.Task, err = w.choose("Task", recipe.Tasks, taskDefault)
 	if err != nil {
 		return err
 	}
+	w.explain("Naming preset", "modelship is a generic local label for status/logs/start/stop, not the HF repository name. Choose an unused label; an existing deployment is not replaced.")
 	o.Name, err = w.ask("Deployment name", "modelship", func(value string) error {
 		if len(value) > 63 || !containerName.MatchString(value) {
 			return fmt.Errorf("Use 1–63 letters/numbers with hyphens or underscores")
@@ -362,19 +392,22 @@ func runWizard(ctx context.Context, input io.Reader, output io.Writer, d wizardD
 	} else if recipe.Kind == "image" {
 		defaultPort = 8001
 	}
-	o.Port, err = w.integer("API port", defaultPort, 1024, 65535)
+	w.explain("Recommended port preset", "Text uses 8000, images 8001, video 18032. This is the inference HTTP port on the GPU server—not SSH or a Thunder SSH port. Range: 1024–65535; forward this same port if using HTTPS ingress.")
+	o.Port, err = w.integer("Inference API port (server-side)", defaultPort, 1024, 65535)
 	if err != nil {
 		return err
 	}
 	if o.Task == "text-generation" {
-		o.Context, err = w.integer("Maximum text context", 4096, 128, 131072)
+		w.explain("Conservative preset", wizardContextHint(model))
+		o.Context, err = w.integer("Context window (tokens)", 4096, 128, 131072)
 		if err != nil {
 			return err
 		}
 	}
 	createKey := false
 	if backend == "native" {
-		o.Python, err = w.ask("Base Python with functioning CUDA PyTorch", "python3", func(v string) error {
+		w.explain("PATH preset", "python3 is a command name, not a detected CUDA environment. Choose the interpreter that already has working CUDA PyTorch; Modelship checks it and never installs/replaces host PyTorch or drivers.")
+		o.Python, err = w.ask("Existing CUDA Python executable", "python3", func(v string) error {
 			if v == "" {
 				return fmt.Errorf("Enter a Python executable or path")
 			}
@@ -389,7 +422,8 @@ func runWizard(ctx context.Context, input io.Reader, output io.Writer, d wizardD
 		}
 		d.cache(&host, model)
 	} else {
-		o.GPUMode, err = w.choose("Docker GPU mode", []string{"auto", "nvidia", "cdi"}, "auto")
+		w.explain("Compatibility preset", "auto tries NVIDIA GPU access; CDI fallback is limited to a recognized Thunder rejection on a single-GPU host. This does not install/configure a Docker GPU runtime.")
+		o.GPUMode, err = w.choose("Docker GPU access mode", []string{"auto", "nvidia", "cdi"}, "auto")
 		if err != nil {
 			return err
 		}
@@ -425,7 +459,8 @@ func runWizard(ctx context.Context, input io.Reader, output io.Writer, d wizardD
 	if recipe.Kind == "video" {
 		waitDefault = "90m"
 	}
-	waitText, err := w.ask("Readiness wait (0 skips waiting)", waitDefault, func(v string) error {
+	w.explain("Startup wait preset", "30m normally, 90m for video: how long to wait for the started worker to download/load and become ready—not a generation timeout, speed estimate, or pip/image-build deadline. 0 returns without waiting; timeout/interruption can leave the worker running.")
+	waitText, err := w.ask("Worker readiness wait (duration; 0 skips waiting)", waitDefault, func(v string) error {
 		t, e := time.ParseDuration(v)
 		if e != nil || t < 0 {
 			return fmt.Errorf("Use a nonnegative duration, e.g. 30m or 90m")
@@ -499,6 +534,19 @@ func runWizard(ctx context.Context, input io.Reader, output io.Writer, d wizardD
 	}
 	fmt.Fprintln(output, "\nREVIEW — exact pinned deployment plan")
 	writePlan(output, plan)
+	fmt.Fprintf(output, "Revision selection: %s -> pinned %s (no floating branch at deployment).\n", strconv.QuoteToASCII(revision), plan.Revision)
+	if wait == 0 {
+		fmt.Fprintln(output, "Readiness wait: skipped (0); the worker may still be downloading/loading after the CLI returns.")
+	} else {
+		fmt.Fprintf(output, "Readiness wait: %s for worker startup only; this does not limit individual generations.\n", waitText)
+	}
+	if backend == "native" {
+		if nativeListen(plan) == "127.0.0.1" {
+			fmt.Fprintln(output, "Access: GPU-server loopback/SSH only. The displayed localhost endpoint is not your laptop/browser.")
+		} else {
+			fmt.Fprintln(output, "Access: authenticated network listener; use trusted HTTPS ingress. No provider URL/forwarding is created automatically.")
+		}
+	}
 	if createKey {
 		fmt.Fprintf(output, "Planned action: create private key file %s (key value never printed).\n", strconv.QuoteToASCII(o.APIKeyFile))
 	}
@@ -529,6 +577,22 @@ func runWizard(ctx context.Context, input io.Reader, output io.Writer, d wizardD
 		fmt.Fprintln(output, "Configure trusted HTTPS/provider forwarding for the selected port; no forwarding was changed automatically.")
 	}
 	return nil
+}
+
+// Match the planner's top-level/nested context source. Advertised model context
+// is metadata, not a measured VRAM-fit or quality guarantee; defaults stay put.
+func wizardContextHint(model Model) string {
+	config := model.Config
+	if config.TextConfig != nil {
+		config = *config.TextConfig
+	}
+	hint := "4096 tokens is a conservative preset, not necessarily the model maximum. Prompt + generated tokens share this window; it is not the maximum output-token setting. CLI range: 128–131072; memory-fit checks still apply."
+	if config.MaxPosition > 0 {
+		hint += fmt.Sprintf(" Model config advertises %d tokens (not a validated capacity).", config.MaxPosition)
+	} else {
+		hint += " A context maximum was not available in the inspected text configuration."
+	}
+	return hint
 }
 
 var shellSafe = regexp.MustCompile(`^[A-Za-z0-9_./:@=+,-]+$`)
