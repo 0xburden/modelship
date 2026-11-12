@@ -1,0 +1,30 @@
+name: CI
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: tests/requirements.txt
+      - run: test -z "$(gofmt -l cmd internal)"
+      - run: go test -race ./...
+      - run: go vet ./...
+      - run: python3 -m pip install -r tests/requirements.txt
+      - run: go build -o bin/modelship-test ./cmd/modelship
+      - run: MODELSHIP_TEST_BINARY="$PWD/bin/modelship-test" python3 -m unittest discover -s tests -v
+      - run: sh -n install.sh scripts/release.sh
+      - run: VERSION=v0.2.0-dev sh scripts/release.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: modelship-linux-amd64
+          path: dist/

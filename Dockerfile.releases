@@ -1,0 +1,16 @@
+ARG RELEASE_VERSION=v0.2.0
+
+FROM golang:1.24.4 AS build
+ARG RELEASE_VERSION
+WORKDIR /src
+COPY go.mod ./
+COPY cmd/ ./cmd/
+COPY internal/ ./internal/
+COPY scripts/ ./scripts/
+COPY install.sh ./
+RUN VERSION="$RELEASE_VERSION" sh scripts/release.sh
+
+FROM nginx:1.28-alpine
+ARG RELEASE_VERSION
+COPY --from=build /src/dist/ /usr/share/nginx/html/${RELEASE_VERSION}/
+EXPOSE 80

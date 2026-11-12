@@ -1,0 +1,133 @@
+package modelship
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == "__native-run" && os.Getenv("MODELSHIP_FAKE_NATIVE_CHILD") == "1" {
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+// Fake Python implements only the install/probe command contract. No pip, CUDA,
+// model downloads, or host Python modifications are performed by these tests.
+func fakeNativePython(t *testing.T, mode string) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	python := filepath.Join(dir, "python")
+	mark := filepath.Join(dir, "pip-ran")
+	t.Setenv("MODELSHIP_FAKE_PIP_MARK", mark)
+	t.Setenv("MODELSHIP_FAKE_NATIVE_CHILD", "1")
+	t.Setenv("MODELSHIP_FAKE_TORCH_MODE", mode)
+	script := `#!/bin/sh
+case "$1" in
+ -c)
+  case "$0" in
+   */venv/bin/python)
+    if [ "$MODELSHIP_FAKE_TORCH_MODE" = missing-inherited ]; then exit 1; fi;;
+  esac
+  if [ "$MODELSHIP_FAKE_TORCH_MODE" = replaced ] && [ -f "$MODELSHIP_FAKE_PIP_MARK" ]; then
+   printf '{"torch_version":"9.9","torch_package_version":"9.9","torch_file":"/different/torch.py","cuda_version":"13.0","gpu":"fixture"}\n'
+  else
+   printf '{"torch_version":"2.12.1+cu130","torch_package_version":"2.12.1+cu130","torch_file":"/working/torch/__init__.py","cuda_version":"13.0","gpu":"fixture"}\n'
+  fi;;
+ -m)
+  case "$2" in
+   venv) mkdir -p "$4/bin"; cp "$0" "$4/bin/python";;
+   pip) printf '%s\n' "$*" > "$MODELSHIP_FAKE_PIP_MARK";;
+   *) exit 1;;
+  esac;;
+ *) exit 1;;
+esac
+`
+	if err := os.WriteFile(python, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	return python, mark
+}
+func installPlan(t *testing.T, python string) Plan {
+	t.Helper()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	o := optsFixture()
+	o.Backend = "native"
+	o.Python = python
+	p, err := BuildPlan(textFixture(), hostFixture(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+func TestNativeInstallConstrainsAndPreservesTorch(t *testing.T) {
+	python, mark := fakeNativePython(t, "normal")
+	p := installPlan(t, python)
+	if err := DeployNative(context.Background(), p, 0); err != nil {
+		t.Fatal(err)
+	}
+	cfg, dir, err := nativeConfig(p.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Torch.Version != "2.12.1+cu130" || cfg.Torch.File != "/working/torch/__init__.py" {
+		t.Fatalf("%+v", cfg.Torch)
+	}
+	b, err := os.ReadFile(mark)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "--constraint "+filepath.Join(dir, "constraints.txt")) {
+		t.Fatal(string(b))
+	}
+	b, _ = os.ReadFile(filepath.Join(dir, "constraints.txt"))
+	if string(b) != "torch===2.12.1+cu130\n" {
+		t.Fatal(string(b))
+	}
+	b, _ = os.ReadFile(filepath.Join(dir, "requirements.txt"))
+	if strings.Contains(string(b), "torch==") {
+		t.Fatal("explicit torch installation requested")
+	}
+	for _, name := range []string{"native_entry.py", "server.py", "text_server.py"} {
+		st, err := os.Stat(filepath.Join(dir, name))
+		if err != nil || st.Mode().Perm() != 0600 {
+			t.Fatal(name, err)
+		}
+	}
+}
+func TestNativeMissingPythonDoesNotLeaveAnUnmanagedDirectory(t *testing.T) {
+	p := installPlan(t, "/definitely/not/a/python")
+	if err := DeployNative(context.Background(), p, 0); err == nil {
+		t.Fatal("accepted missing interpreter")
+	}
+	dir, _ := nativeDir(p.Name)
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatal("left an unusable deployment directory", err)
+	}
+}
+func TestNativeInstallRefusesTorchReplacement(t *testing.T) {
+	python, _ := fakeNativePython(t, "replaced")
+	p := installPlan(t, python)
+	err := DeployNative(context.Background(), p, 0)
+	if err == nil || !strings.Contains(err.Error(), "changed the PyTorch import") {
+		t.Fatal(err)
+	}
+	dir, _ := nativeDir(p.Name)
+	if _, err = os.Stat(filepath.Join(dir, "run.json")); !os.IsNotExist(err) {
+		t.Fatal("started worker after torch replacement")
+	}
+}
+func TestNativeInstallDoesNotAskPipForMissingInheritedTorch(t *testing.T) {
+	python, mark := fakeNativePython(t, "missing-inherited")
+	p := installPlan(t, python)
+	err := DeployNative(context.Background(), p, 0)
+	if err == nil || !strings.Contains(err.Error(), "cannot use the base PyTorch") {
+		t.Fatal(err)
+	}
+	if _, err = os.Stat(mark); !os.IsNotExist(err) {
+		t.Fatal("ran pip despite missing inherited PyTorch")
+	}
+}
