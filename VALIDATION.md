@@ -84,6 +84,123 @@ Retained deployment names:
 
 Choose the desired service rather than blindly starting every test worker. The local artifact directory includes `final-state.json` with the stopped-state/PyTorch checks.
 
+## Recipe-branch Gemma 4 validation on a fresh A6000
+
+This work is on `feat/model-recipes`, **not the published v0.2.0-alpha.1**. New development CLI: `v0.3.0-recipes-dev.3`, installed separately on the test server as `~/.local/bin/modelship-dev`.
+
+- Same Ubuntu 22.04.5 / Python 3.12.13 / A6000 48 GiB / driver 610.43.02 / host PyTorch 2.12.1+cu130 environment family as the baseline.
+- `google/gemma-4-E4B-it` pinned to `4ecc2ba63bcac23ba4a767fc87025b1450f84c9c`, ~15.99 GB of checkpoint artifacts. Full model loads in BF16; context 4096; text-only API; eager attention.
+- Isolated Transformers 5.22.2 / Hugging Face Hub 2.4.0 / safetensors 0.8.0 / accelerate 1.15.0 profile installed without replacing host PyTorch. Pre/post CUDA probes passed.
+- Initial untemplated completion output repeated text despite HTTP 200. This was treated as a quality failure, not a passing model test. The recipe now frames completion prompts as a user turn and disables thinking for bounded text responses. Legacy causal-model completion framing is unchanged.
+- Post-fix semantic completion: `The capital of France is **Paris**.` Chat: `Gemma is working.`
+- Nine live API checks passed, including model listing, completions/chat, unknown model 404, unsupported streaming/parameter/context errors 422, and simultaneous 200/503 busy handling. A separate image-message-content request returned 422, as required by the text-only scope.
+- Post-fix single request times: 4.680 s completion / 5.431 s chat. These are not throughput benchmarks.
+- Stop/start, cached loading, and schema-2 metadata/loader/dtype flags passed. The actual published alpha binary refuses schema-2 state, preventing accidental legacy loader/dtype fallback.
+- A newly created Qwen2.5-3B regression deployment passed the same API and Paris semantic checks while Gemma stayed healthy. Worker configuration confirms Qwen uses its legacy float16/causal/raw-completion profile and Gemma uses BF16/multimodal/templated-completion settings. No existing deployment was stopped to make room.
+- Listeners: `127.0.0.1:8000` (Qwen), `127.0.0.1:8003` (Gemma). No Thunder HTTP forwarding is configured. Combined post-request device memory was 21370 MiB used / 27770 MiB free; this is not a peak allocated-memory measurement.
+- Both demonstrations are retained running for comparison under names `qwen-regression` and `gemma4-e4b-test`. Use `modelship-dev` to manage them. The instance remains running/billable and was not resized by the agent.
+- Machine-readable reports are ignored under local `validation-artifacts/gemma4/templated/`, `validation-artifacts/qwen-regression/`, and remote `~/modelship-validation/`.
+
+All five newly requested repositories were also inspected at pinned revisions using the host-independent CLI. The next batch below implements the remaining experimental adapters and hard weight checks; GPU-inference validation remains model-specific. LoRA is still future work. See `MODEL_SUPPORT.md` for precise format/license/code constraints.
+
+## All-model branch: tensor-header and current-server preflight
+
+All changes remain on `feat/model-recipes` / draft PR #1; no merge or published release change. Native experimental paths now exist for Qwen3.8 text, Qwen Image 2.1 generation/editing, reviewed/opt-in MOSS images, and explicitly selected official WAN Diffusers video. Original WAN PTH loading remains blocked; there is no silent repository substitution.
+
+Real CLI `plan --backend native --experimental --research --allow-risk --json` ran on the A6000 with **49140 MiB total / 27770 MiB free**, while both retained demonstrations remained running. Only shard manifests and bounded safetensors headers were fetched, not complete tensor files. Minimum requested-dtype resident bytes were computed from every selected component, preserving integer buffers and FP32 VAE overrides:
+
+| Model / selected format | Download bytes (GB) | Minimum weight VRAM (GiB) | Fits total / free | Observed decision |
+| --- | ---: | ---: | --- | --- |
+| Qwen3.8-27B | 55.563 | 51.747 | no / no | Hard total/free blockers despite `--allow-risk` |
+| Qwen Image 2.1 | 33.116 | 30.841 | yes / no | Hard free-VRAM blocker despite `--allow-risk` |
+| Gemma 4 E4B | 15.993 | 14.894 | yes / yes | Plan accepted |
+| MOSS Image SFT | 27.200 | 25.332 | yes / yes | Separate repository-code approval still required; research did not imply it |
+| WAN 2.2 official Diffusers | 126.178 | 64.283 | no / no | Hard VRAM blockers plus cache disk shortfall |
+
+WAN's FP32 experts explain why on-disk bytes differ from BF16 resident weight bytes; both expert networks, text encoder and FP32 VAE were included. The native cache had 72425 MiB free versus a 130445 MiB missing-download/headroom budget, so a full WAN download was blocked independently of VRAM.
+
+- Local Go race tests/vet pass; Linux cross-compiled Go tests also pass on the actual server, including native subprocess/state tests. Fake native tests use ephemeral ports rather than colliding with existing localhost services.
+- All **54 Python tests** pass on Linux, including three real CLI/fake-worker lifecycle integrations and 25 fake-WAN API/lifecycle tests. No fake test claims real GPU/video-codec validation.
+- Tests cover malformed/duplicate/overflowing header data, ignored/oversized/partial HTTP ranges, missing shards/manifests/weight sizes, transport-error token redaction, source-FP32 load conversion, mixed component dtypes, integer buffers, both WAN experts, selected/free GPU checks, unchanged research/code boundaries, code SHA checks, pinned-cache disk accounting, and restart metadata compatibility.
+- Modern native/container environments explicitly disable implicit Hub-kernel fetching with `USE_HUB_KERNELS=NO` in addition to rejecting ordinary model repository Python. The only repository-code exception is the explicitly approved, hash-pinned MOSS path.
+- Qwen3.8/WAN GPU inference needs larger hardware; Qwen Image/MOSS live image generation remains pending. Existing services were not stopped to make room, and MOSS source code was not executed.
+- Ignored evidence: local `validation-artifacts/batch-dev4/`, remote `~/modelship-validation/recipes-batch-dev4/`. No source code, credentials or weights were copied out of the shared HF cache.
+
+### Current-loader Gemma regression — passed
+
+The updated `v0.3.0-recipes-dev.5` loader was also exercised on real hardware, not just the earlier Gemma implementation. A temporary `gemma4-dev5-regression` deployment on **127.0.0.1:18013** coexisted with both retained services without stopping either.
+
+- Direct CUDA placement, BF16/eager attention, separate modern dependency environment, and pre/post-install host-PyTorch preservation passed.
+- All live text checks passed, including semantic completion `The capital of France is **Paris**.`, chat, model listing, validation/context errors and concurrent busy handling.
+- Individual completion/chat times: 3.839 s / 5.333 s; not a benchmark.
+- Actual worker settings verified native **schema 3**, BF16/multimodal loader, templated completions, thinking disabled, explicit research acknowledgment, persisted absolute `HF_HUB_CACHE`, and **`USE_HUB_KERNELS=NO`**.
+- Stop/start, cached loading, current-memory recheck and post-restart CLI smoke passed.
+- The temporary deployment was stopped and uninstalled. The original `qwen-regression` / `gemma4-e4b-test` workers remained running; GPU memory returned to **21370 MiB used / 27770 MiB free**. Shared model cache and host PyTorch `2.12.1+cu130` were preserved.
+- The development test binary remains under the private validation directory, not installed over `~/.local/bin/modelship-dev`, and the published alpha release was not changed.
+
+## Approved image GPU validation: Qwen Image 2.1
+
+The user explicitly approved temporarily pausing/restoring `qwen-regression` and `gemma4-e4b-test`, and executing the reviewed pinned MOSS code. All tests remain on `feat/model-recipes`; no published release changes.
+
+Qwen Image uses revision `d26bb61231c349cf6b7896fa83353113880e1ba3`, BF16 transformer/text encoder and FP32 VAE, direct CUDA placement, research acknowledgment, and Diffusers 0.42.1 / Transformers 5.22.2. No host PyTorch replacement or model substitution.
+
+| Request | Shape / steps | Result | Single-request time |
+| --- | --- | --- | --- |
+| Text-to-image | 512² / 20 | HTTP 200 / valid PNG | 7.618 s |
+| Text-to-image | 1024² / 20 | HTTP 200 / valid PNG | 18.191 s |
+| Image-conditioned edit | 512² / 20 | HTTP 200 / valid PNG | 9.591 s |
+
+These are individual request timings, not benchmarks. Both generated images were downloaded and visually inspected: coherent watercolor observatories on mountains at sunset. The edit preserved the observatory/rock composition and changed the sunset to a dark starry sky, matching the prompt. Seed 42 for generation, 43 for editing.
+
+**A real editing bug was found and fixed**, rather than counted as an HTTP-only success. Upstream Diffusers 0.42.1 casts conditioning pixels to BF16 before calling a separately FP32 VAE, causing a convolution input/bias dtype mismatch. The dedicated local pipeline subclass now encodes/normalizes in VAE precision and casts encoded latents back to the incoming BF16 precision before transformer concatenation. A regression test covers both cast boundaries. The failed run stopped its test worker and successfully restored both demos before retrying. After the fix, both generation PNGs were byte-identical to the earlier successful outputs.
+
+Additional checks passed: wrong task 409; invalid dimensions/steps/long prompts/URL fields/unsupported strength/negative prompt at CFG 1 returned 422; concurrent generation 200/503; required inline image input; URL-as-base64 rejection; cached image-to-image deployment and stop/start readiness. Observed fixed-run device usage was 31626 MiB loaded / 32808 MiB after generation / 33320 MiB after editing, **snapshots, not peak memory**. No offload/quantization was used.
+
+Ignored evidence: `validation-artifacts/image-live-20261112-072826/` (initial/failing edit run) and `validation-artifacts/image-live-20261112-074424/` (fixed run), plus the matching directories under remote `~/modelship-validation/recipes-batch-dev4/`.
+
+### MOSS Image SFT and final restoration — passed
+
+After explicit user approval, `OpenMOSS-Team/MOSS-Image-SFT` at `f972bd4b4b9e3852133cc5da954d87bc32cd8fb9` passed real native inference using the reviewed code gate, BF16 transformer/text encoder, FP32 VAE, CPU noise generator, 512-token text cap, and guidance 3.0.
+
+- **512² / 20 steps:** HTTP 200, 11.671 s. **1024² / 20 steps:** HTTP 200, 29.205 s. Single-request timings, not benchmarks.
+- Both PNGs were downloaded and visually inspected: clear watercolor observatory/mountain/sunset scenes matching the prompt, not blank or corrupted.
+- Wrong endpoint/dimensions/steps/oversized prompt/URL fields rejected; concurrent requests returned 200/503 as intended.
+- The exact three approved Python files were SHA-256-verified before loading, and their cached bytes were independently checked afterward. Recorded approval/code revision matched the pinned checkpoint.
+- Pre-test source inspection found that the restricted snapshot whitelist omitted `tokenizer/chat_template.jinja`. It was added as tokenizer data (not a broad Python allowlist); a regression test verifies its inclusion. Real prompt encoding now passes with the bundled chat template.
+- Device-memory snapshots: **25976 MiB loaded / 32562 MiB after generation**, not peak memory. Existing host PyTorch remained **2.12.1+cu130**, same import path/package version, with pre/post CUDA checks passing.
+- All temporary image workers were stopped and uninstalled. **Both original demos were restored and CLI smoke-tested.** Final device snapshot: **21364 MiB used / 27776 MiB free**. No restore/cleanup errors.
+- Shared HF weights remain cached intentionally; no automatic cache eviction. Disk ended at **14549 MiB free** on the 100 GB instance. More large model downloads need additional space or deliberate cache management.
+- All **55 Python tests passed on Linux with the actual CLI binary**, including three fake-worker lifecycle integrations; the extra regression test covers the Qwen edit precision bridge. Go race tests/vet and Linux Go subprocess tests also pass. At that stage, Qwen3.8/full WAN GPU inference and actual WAN encoding still required larger hardware; both were subsequently exercised on the A100 instance in the sections below.
+
+## Larger-instance Qwen3.8 validation — passed
+
+The user supplied instance `1` (`pjj91chs`) specifically for the remaining large models. Observed hardware: **NVIDIA A100-SXM4-80GB, 81920 MiB total / 81176 MiB initially free**, compute8.0; 96 GB host RAM; 150 GB disk (143688 MiB initially available). Ubuntu22.04.5/Python3.12.13/driver610.43.02/PyTorch2.12.1+cu130. Actual CUDA preflight returned4.0. No driver or host-Torch changes.
+
+`Qwen/Qwen3.8-27B` at `37561816e66b5b9153b1b64c10968c18c1e6f4a0` passed native deployment, full BF16/conditional-generation loading, eager text-only inference with context4096, and **no quantization/offload/heuristic override**. The header minimum was51.747GiB; runtime heuristic64010MiB, fitting this GPU.
+
+- Semantic completion: `The capital of France is **Paris**.` Arithmetic chat returned`56` for7×8. General chat produced a coherent GPU explanation.
+- All live text API/model listing/error/context and busy checks passed; concurrent requests returned200/503. Media payload rejected422, preserving text-only scope.
+- Individual completion/chat times2.047s/2.246s, not a benchmark.
+- Cached stop/start and CLI smoke passed. Host PyTorch import/version/package metadata were preserved.
+- Device-memory snapshot52733MiB loaded (not a peak). Provider counters reserve memory separately; total/free/used may not sum exactly.
+- Testing is sequential because both source checkpoints exceed the150GB disk together. Qwen used a newly created, marked, private test cache. After stopping/uninstalling only its test deployment, the harness verified that no saved deployment referenced that cache and deleted **only that owned cache** before WAN. Global/user model caches and credentials were not removed.
+- Evidence: ignored `validation-artifacts/a100-large-models/` and remote `~/modelship-validation/large-models/run-20261112-082534/`. No operations were issued against instance0.
+
+### WAN 2.2 dual-expert video/codec validation — passed
+
+On the same dedicated A10080GB/96GBRAM/150GB-disk instance, explicitly selected official `Wan-AI/Wan2.2-T2V-A14B-Diffusers` at `5be7df9619b54f4e2667b2755bc6a756675b5cd7`. Original PTH loading was not enabled. Both experts/text encoder loaded in BF16, VAEFP32, directly on CUDA; no quantization/offload or repository Python.
+
+- Header estimate64.283GiB resident weights fits total and free VRAM. The conservative runtime estimate82313MiB exceeded90% of81176MiB free. **Explicit `--allow-risk` was used only for this runtime heuristic**; hard tensor-header/weight/disk checks stayed enforced. Small smoke preceded the larger clip.
+- The owned Qwen cache was removed before WAN, restoring143641MiB available disk. Full source checkpoint126.178GB downloaded; WAN loaded with22892MiB disk free.
+- **Codec smoke:**256²/5frames/4steps/16fps,4.023s including async polling/download. MP4H.264 decoded exactly5 frames,0.31s duration,29598bytes.
+- **Bounded quality sample:**512²/17frames/30steps/16fps,50.076s including polling/download. MP4H.264 decoded exactly17 frames,1.06s duration,105755bytes. These are individual end-to-end request times, not benchmarks.
+- All frames decoded; dimensions/FPS/count, non-flat color variance and nonidentical adjacent frames passed. First/middle/last quality frames were downloaded and visually inspected: coherent paper boat, water/ripples and reflections. **Boat color was white rather than requested red**, so prompt adherence is not perfect. Only a short bounded sample was tested, not longer/maximal clips or production quality.
+- Async202/job polling/content retrieval, busy503/no backlog, content-before-ready409, unknown job404, parameter/shape/frame/body limits, and URL-field rejection passed.
+- Device snapshots66485MiB loaded /69538MiB after generation (not peaks). Provider total/free/used counters reserve memory separately.
+- Cached stop/start passed; pre-restart job IDs returned404 as designed, and a fresh post-restart256²/5-frame/4-step job succeeded.
+- Test workers were stopped successfully; after CUDA teardown, observed device use returned to0MiB (81176MiB free). WAN cache/state/venv are retained stopped as`wan22-a14b-native`, localhost18032; Qwen's private test deployment/cache were retired to fit WAN on disk. Final disk22892MiB free. Instance1 remains running/billable; no instance resize/delete or operation on instance0.
+- Reusable opt-in client: `tests/live_video_check.py`; run using a video deployment's Python for its pinned imageio-ffmpeg/Pillow. Three CPU/fake-codec client tests bring the suite to58 tests; all58 passed on the actual Linux host with the CLI binary, alongside Go race/vet and Linux Go lifecycle checks. Fakes do not establish GPU/codec correctness by themselves.
+
 ## Thunder Docker blocker
 
 Provider Docker rejects `--gpus` / `--runtime=nvidia`; its documented GPU flag is `--device nvidia.com/gpu=all`.
@@ -119,3 +236,7 @@ Fake-model tests do not establish CUDA/runtime compatibility. Native text and SD
 6. Test graceful termination during loading/generation and retained logs after failures. Native auto-restart/reboot persistence is not implemented.
 7. Test FLUX separately on suitable memory/hardware; it remains unvalidated.
 8. Publish a versioned release via Dokploy and test the curl bootstrap on another fresh supported host.
+
+## Versioned release host: v0.3.0-alpha.1
+
+Release preparation adds a source-controlled version, verified retention of all three original v0.2.0-alpha.1 assets, and an existing-version checksum guard. Four offline regression cases cover stale Dokploy build arguments, retained-file corruption, differing existing versions and identical rebuilds. The release Docker image was built locally with a deliberately stale `RELEASE_VERSION=v0.2.0-alpha.1`; it selected the tracked new version and retained checksum-pinned old files instead of relabeling or removing them. Publication/live endpoint verification is a separate release step.

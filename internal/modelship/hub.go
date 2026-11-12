@@ -39,6 +39,7 @@ type HubModel struct {
 	PipelineTag string      `json:"pipeline_tag"`
 	Library     string      `json:"library_name"`
 	Gated       any         `json:"gated"`
+	Config      ModelConfig `json:"config"`
 	Siblings    []ModelFile `json:"siblings"`
 	Safetensors struct {
 		Total int64 `json:"total"`
@@ -48,23 +49,30 @@ type HubModel struct {
 	} `json:"cardData"`
 }
 type ModelConfig struct {
-	Architectures []string        `json:"architectures"`
-	ModelType     string          `json:"model_type"`
-	Quantization  json.RawMessage `json:"quantization_config"`
-	Layers        int             `json:"num_hidden_layers"`
-	Heads         int             `json:"num_attention_heads"`
-	KVHeads       int             `json:"num_key_value_heads"`
-	Hidden        int             `json:"hidden_size"`
-	HeadDim       int             `json:"head_dim"`
-	MaxPosition   int             `json:"max_position_embeddings"`
+	Architectures       []string        `json:"architectures"`
+	ModelType           string          `json:"model_type"`
+	Quantization        json.RawMessage `json:"quantization_config"`
+	Layers              int             `json:"num_hidden_layers"`
+	Heads               int             `json:"num_attention_heads"`
+	KVHeads             int             `json:"num_key_value_heads"`
+	Hidden              int             `json:"hidden_size"`
+	HeadDim             int             `json:"head_dim"`
+	MaxPosition         int             `json:"max_position_embeddings"`
+	TextConfig          *ModelConfig    `json:"text_config,omitempty"`
+	TransformersVersion string          `json:"transformers_version,omitempty"`
 }
 type ModelIndex struct {
 	Class string `json:"_class_name"`
 }
 type Model struct {
-	Hub    HubModel
-	Config ModelConfig
-	Index  ModelIndex
+	Hub                   HubModel
+	Config                ModelConfig
+	Index                 ModelIndex
+	SourceConfig          string
+	InspectionWarnings    []string
+	WeightMetadataChecked bool
+	WeightMetadataError   string
+	WeightMetadata        []WeightFileMetadata
 }
 type Hub struct {
 	BaseURL string
@@ -132,19 +140,24 @@ func (h *Hub) get(ctx context.Context, path string, out any) error {
 	return nil
 }
 func (h *Hub) Inspect(ctx context.Context, id, revision string) (Model, error) {
+	return h.inspect(ctx, id, revision, false)
+}
+func (h *Hub) InspectPartial(ctx context.Context, id, revision string) (Model, error) {
+	return h.inspect(ctx, id, revision, true)
+}
+func (h *Hub) inspect(ctx context.Context, id, revision string, partial bool) (Model, error) {
 	var m Model
 	if revision == "" || len(revision) > 200 || strings.ContainsAny(revision, "\r\n?#") {
 		return m, fmt.Errorf("invalid revision")
 	}
-	err := h.get(ctx, "/api/models/"+id+"/revision/"+url.PathEscape(revision)+"?blobs=true", &m.Hub)
-	if err != nil {
+	if err := h.get(ctx, "/api/models/"+id+"/revision/"+url.PathEscape(revision)+"?blobs=true", &m.Hub); err != nil {
 		return m, err
 	}
 	if !commitPattern.MatchString(m.Hub.SHA) {
 		return m, fmt.Errorf("repository response has no valid immutable commit SHA")
 	}
-	// Use the requested, validated ID, not an arbitrary ID supplied by metadata.
 	m.Hub.ID = id
+	m.Config = m.Hub.Config // Useful public projection if gated configuration cannot be read.
 	has := func(name string) bool {
 		for _, f := range m.Hub.Siblings {
 			if f.Name == name {
@@ -154,18 +167,28 @@ func (h *Hub) Inspect(ctx context.Context, id, revision string) (Model, error) {
 		return false
 	}
 	base := "/" + id + "/resolve/" + m.Hub.SHA + "/"
-	if has("model_index.json") {
-		if err = h.get(ctx, base+"model_index.json", &m.Index); err != nil {
+	var err error
+	switch {
+	case has("model_index.json"):
+		m.SourceConfig = "model_index.json"
+		err = h.get(ctx, base+m.SourceConfig, &m.Index)
+	case has("config.json"):
+		m.SourceConfig = "config.json"
+		err = h.get(ctx, base+m.SourceConfig, &m.Config)
+	case has("adapter_config.json"):
+		err = fmt.Errorf("this is an adapter/LoRA, not a standalone model; base-model composition is not implemented")
+	case has("configuration.json") && (id == "Wan-AI/Wan2.2-T2V-A14B" || m.Hub.Library == "wan2.2"):
+		m.SourceConfig = "configuration.json"
+		var config map[string]any
+		err = h.get(ctx, base+m.SourceConfig, &config)
+	default:
+		err = fmt.Errorf("no supported config.json or Diffusers model_index.json; GGUF and single-file checkpoints are not supported yet")
+	}
+	if err != nil {
+		if !partial {
 			return m, err
 		}
-	} else if has("config.json") {
-		if err = h.get(ctx, base+"config.json", &m.Config); err != nil {
-			return m, err
-		}
-	} else if has("adapter_config.json") {
-		return m, fmt.Errorf("this is an adapter/LoRA, not a standalone model; base-model composition is not implemented")
-	} else {
-		return m, fmt.Errorf("no supported config.json or Diffusers model_index.json; GGUF and single-file checkpoints are not supported yet")
+		m.InspectionWarnings = append(m.InspectionWarnings, err.Error())
 	}
 	return m, nil
 }

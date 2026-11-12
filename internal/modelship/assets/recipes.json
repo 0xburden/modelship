@@ -1,0 +1,407 @@
+{
+  "schema": 1,
+  "recipes": [
+    {
+      "id": "transformers-text",
+      "name": "Established causal language models",
+      "kind": "text",
+      "status": "supported",
+      "architectures": [
+        "LlamaForCausalLM",
+        "MistralForCausalLM",
+        "Qwen2ForCausalLM",
+        "Qwen3ForCausalLM",
+        "GemmaForCausalLM",
+        "Gemma2ForCausalLM",
+        "Phi3ForCausalLM"
+      ],
+      "backends": [
+        "native",
+        "docker"
+      ],
+      "tasks": [
+        "text-generation"
+      ],
+      "runtime": "transformers",
+      "native_loader": "causal-lm",
+      "dtype": "float16",
+      "native_requirements": [
+        "transformers==4.56.2",
+        "huggingface-hub==0.36.0",
+        "safetensors==0.6.2",
+        "fastapi==0.116.1",
+        "uvicorn==0.35.0",
+        "pydantic==2.11.7"
+      ],
+      "notes": [
+        "Runtime path tested with Qwen2.5-3B; this is not verification of every matching repository."
+      ]
+    },
+    {
+      "id": "stable-diffusion",
+      "name": "Stable Diffusion",
+      "kind": "image",
+      "status": "supported",
+      "pipelines": [
+        "StableDiffusionPipeline"
+      ],
+      "backends": [
+        "native",
+        "docker"
+      ],
+      "tasks": [
+        "text-to-image",
+        "image-to-image"
+      ],
+      "runtime": "diffusers",
+      "native_loader": "auto-pipeline",
+      "dtype": "float16",
+      "memory_floor_mib": 6144,
+      "native_requirements": [
+        "transformers==4.56.2",
+        "huggingface-hub==0.36.0",
+        "safetensors==0.6.2",
+        "fastapi==0.116.1",
+        "uvicorn==0.35.0",
+        "pydantic==2.11.7",
+        "diffusers==0.35.1",
+        "accelerate==1.10.1",
+        "pillow==11.3.0",
+        "sentencepiece==0.2.1",
+        "protobuf==6.32.1"
+      ]
+    },
+    {
+      "id": "sdxl",
+      "name": "Stable Diffusion XL",
+      "kind": "image",
+      "status": "supported",
+      "pipelines": [
+        "StableDiffusionXLPipeline"
+      ],
+      "backends": [
+        "native",
+        "docker"
+      ],
+      "tasks": [
+        "text-to-image",
+        "image-to-image"
+      ],
+      "runtime": "diffusers",
+      "native_loader": "auto-pipeline",
+      "dtype": "float16",
+      "memory_floor_mib": 12288,
+      "native_requirements": [
+        "transformers==4.56.2",
+        "huggingface-hub==0.36.0",
+        "safetensors==0.6.2",
+        "fastapi==0.116.1",
+        "uvicorn==0.35.0",
+        "pydantic==2.11.7",
+        "diffusers==0.35.1",
+        "accelerate==1.10.1",
+        "pillow==11.3.0",
+        "sentencepiece==0.2.1",
+        "protobuf==6.32.1"
+      ],
+      "notes": [
+        "Reference SDXL base model tested for native generation/editing on A6000."
+      ]
+    },
+    {
+      "id": "flux",
+      "name": "FLUX.1 standard pipeline",
+      "kind": "image",
+      "status": "supported",
+      "pipelines": [
+        "FluxPipeline"
+      ],
+      "backends": [
+        "native",
+        "docker"
+      ],
+      "tasks": [
+        "text-to-image",
+        "image-to-image"
+      ],
+      "runtime": "diffusers",
+      "native_loader": "auto-pipeline",
+      "dtype": "bfloat16",
+      "memory_floor_mib": 40960,
+      "native_requirements": [
+        "transformers==4.56.2",
+        "huggingface-hub==0.36.0",
+        "safetensors==0.6.2",
+        "fastapi==0.116.1",
+        "uvicorn==0.35.0",
+        "pydantic==2.11.7",
+        "diffusers==0.35.1",
+        "accelerate==1.10.1",
+        "pillow==11.3.0",
+        "sentencepiece==0.2.1",
+        "protobuf==6.32.1"
+      ],
+      "notes": [
+        "Adapter implemented, but real FLUX inference remains unvalidated; no CPU offload or quantized variants."
+      ]
+    },
+    {
+      "id": "gemma4-text",
+      "name": "Gemma 4 multimodal weights, text-only API",
+      "kind": "text",
+      "status": "experimental",
+      "repositories": [
+        "google/gemma-4-E4B-it"
+      ],
+      "architectures": [
+        "Gemma4ForConditionalGeneration"
+      ],
+      "backends": [
+        "native"
+      ],
+      "tasks": [
+        "text-generation"
+      ],
+      "runtime": "transformers",
+      "native_loader": "multimodal-lm",
+      "dtype": "bfloat16",
+      "min_python": "3.11",
+      "min_compute": "8.0",
+      "text_only": true,
+      "template_completions": true,
+      "disable_thinking": true,
+      "native_requirements": [
+        "transformers==5.22.2",
+        "huggingface-hub==2.4.0",
+        "safetensors==0.8.0",
+        "accelerate==1.15.0",
+        "pillow==11.3.0",
+        "fastapi==0.116.1",
+        "uvicorn==0.35.0",
+        "pydantic==2.11.7"
+      ],
+      "notes": [
+        "Loads the full conditional-generation checkpoint; E4B effective parameters do not mean 4B stored parameters.",
+        "Text prompts only. Image/audio/video inputs and tool calling are not implemented.",
+        "Uses a separate modern Transformers environment; existing 4.x deployments are not upgraded."
+      ]
+    },
+    {
+      "id": "qwen3.8-multimodal",
+      "name": "Qwen3.8 / Qwen3.5 conditional generation",
+      "kind": "text",
+      "status": "experimental",
+      "repositories": [
+        "Qwen/Qwen3.8-27B"
+      ],
+      "architectures": [
+        "Qwen3_5ForConditionalGeneration"
+      ],
+      "backends": [
+        "native"
+      ],
+      "tasks": [
+        "text-generation"
+      ],
+      "runtime": "transformers",
+      "dtype": "bfloat16",
+      "text_only": true,
+      "native_loader": "multimodal-lm",
+      "min_python": "3.11",
+      "min_torch": "2.9",
+      "min_compute": "8.0",
+      "template_completions": true,
+      "disable_thinking": true,
+      "native_requirements": [
+        "transformers==5.22.2",
+        "huggingface-hub==2.4.0",
+        "safetensors==0.8.0",
+        "accelerate==1.15.0",
+        "pillow==11.3.0",
+        "fastapi==0.116.1",
+        "uvicorn==0.35.0",
+        "pydantic==2.11.7"
+      ],
+      "notes": [
+        "Full unquantized BF16 checkpoint, text-only HTTP input. No vision input, quantization or CPU offload.",
+        "Hybrid attention uses the modern Transformers implementation; Pinned text-only checkpoint GPU-tested on A100 80 GB with semantic/API and cached restart checks.",
+        "The 27B checkpoint exceeds A6000 VRAM before cache/activations; weights-alone fit is a non-overridable preflight check."
+      ]
+    },
+    {
+      "id": "qwen-image21",
+      "name": "Qwen Image 2.1 generation and editing",
+      "kind": "image",
+      "status": "experimental",
+      "repositories": [
+        "Qwen/Qwen-Image-2.1"
+      ],
+      "pipelines": [
+        "QwenImage21Pipeline"
+      ],
+      "backends": [
+        "native"
+      ],
+      "tasks": [
+        "text-to-image",
+        "image-to-image"
+      ],
+      "runtime": "diffusers",
+      "dtype": "bfloat16",
+      "notes": [
+        "Count text encoder, image transformer, and VAE weights, not just the advertised 7B image component.",
+        "Requires --research acknowledgment of non-commercial research/evaluation use under the pinned model license; no commercial-use authorization is granted.",
+        "One QwenImage21Pipeline handles generation and image-conditioned editing; strength is not supported. Default guidance is 1.0 and dimensions must be multiples of 32.",
+        "Native A6000 generation at 512/1024 and image-conditioned editing at 512 tested. The pinned adapter bridges FP32 VAE encoding and BF16 transformer latents; no strength-based editing."
+      ],
+      "native_loader": "qwen-image21",
+      "min_python": "3.11",
+      "min_torch": "2.9",
+      "min_compute": "8.0",
+      "component_dtypes": {
+        "vae": "float32"
+      },
+      "requires_research": true,
+      "native_requirements": [
+        "transformers==5.22.2",
+        "huggingface-hub==2.4.0",
+        "safetensors==0.8.0",
+        "accelerate==1.15.0",
+        "pillow==11.3.0",
+        "fastapi==0.116.1",
+        "uvicorn==0.35.0",
+        "pydantic==2.11.7",
+        "diffusers==0.42.1",
+        "sentencepiece==0.2.1",
+        "protobuf==6.32.1"
+      ],
+      "memory_floor_mib": 40960
+    },
+    {
+      "id": "moss-image",
+      "name": "MOSS Image SFT",
+      "kind": "image",
+      "status": "experimental",
+      "repositories": [
+        "OpenMOSS-Team/MOSS-Image-SFT"
+      ],
+      "pipelines": [
+        "MOSSImagePipeline"
+      ],
+      "backends": [
+        "native"
+      ],
+      "tasks": [
+        "text-to-image"
+      ],
+      "runtime": "diffusers",
+      "dtype": "bfloat16",
+      "requires_custom_code": true,
+      "native_loader": "moss-image",
+      "min_python": "3.11",
+      "min_torch": "2.9",
+      "min_compute": "8.0",
+      "component_dtypes": {
+        "vae": "float32"
+      },
+      "native_requirements": [
+        "transformers==5.22.2",
+        "huggingface-hub==2.4.0",
+        "safetensors==0.8.0",
+        "accelerate==1.15.0",
+        "pillow==11.3.0",
+        "fastapi==0.116.1",
+        "uvicorn==0.35.0",
+        "pydantic==2.11.7",
+        "diffusers==0.42.1",
+        "sentencepiece==0.2.1",
+        "protobuf==6.32.1"
+      ],
+      "memory_floor_mib": 36864,
+      "code_revision": "f972bd4b4b9e3852133cc5da954d87bc32cd8fb9",
+      "code_hashes": {
+        "pipeline_moss_image.py": "1dac1aca9feb1bfdfc727a401e4b67d61a505d3190706d1b7d2d784f88678b31",
+        "scheduler/pipeline_moss_image.py": "1dac1aca9feb1bfdfc727a401e4b67d61a505d3190706d1b7d2d784f88678b31",
+        "transformer/pipeline_moss_image.py": "1dac1aca9feb1bfdfc727a401e4b67d61a505d3190706d1b7d2d784f88678b31"
+      },
+      "notes": [
+        "Requires separate --trust-model-code opt-in. Only the reviewed immutable revision and three SHA-256-verified source files are accepted.",
+        "Repository Python executes as your user, without a sandbox; research use is not a custom-code security approval.",
+        "Mixed BF16 transformer/text encoder and FP32 VAE, CPU-generated initial noise. Text-to-image only; Pinned native checkpoint GPU-tested at 512/1024 on A6000 after explicit source-code approval."
+      ]
+    },
+    {
+      "id": "wan22-t2v-native",
+      "name": "WAN 2.2 T2V A14B original checkpoint",
+      "kind": "video",
+      "status": "planned",
+      "repositories": [
+        "Wan-AI/Wan2.2-T2V-A14B"
+      ],
+      "backends": [
+        "native"
+      ],
+      "tasks": [
+        "text-to-video"
+      ],
+      "runtime": "wan",
+      "requires_custom_code": true,
+      "blockers": [
+        "Original-format weights include PTH support files and are not automatically deserialized or converted.",
+        "Select the official converted safetensors repository explicitly: --weights-repo Wan-AI/Wan2.2-T2V-A14B-Diffusers. The selected repository and immutable revision are shown in the plan."
+      ],
+      "notes": [
+        "Original and converted layouts have different storage dtypes. The planner counts both denoising experts, text encoder, and VAE.",
+        "No offload or quantization; full resident weights cannot fit A6000. Video GPU inference needs a larger GPU and adequate disk/RAM."
+      ]
+    },
+    {
+      "id": "wan22-t2v-diffusers",
+      "name": "WAN 2.2 T2V A14B official Diffusers conversion",
+      "kind": "video",
+      "status": "experimental",
+      "repositories": [
+        "Wan-AI/Wan2.2-T2V-A14B-Diffusers"
+      ],
+      "pipelines": [
+        "WanPipeline"
+      ],
+      "backends": [
+        "native"
+      ],
+      "tasks": [
+        "text-to-video"
+      ],
+      "runtime": "diffusers",
+      "native_loader": "wan-pipeline",
+      "dtype": "bfloat16",
+      "component_dtypes": {
+        "vae": "float32"
+      },
+      "min_python": "3.11",
+      "min_torch": "2.9",
+      "min_compute": "8.0",
+      "memory_floor_mib": 77824,
+      "native_requirements": [
+        "transformers==5.22.2",
+        "huggingface-hub==2.4.0",
+        "safetensors==0.8.0",
+        "accelerate==1.15.0",
+        "pillow==11.3.0",
+        "fastapi==0.116.1",
+        "uvicorn==0.35.0",
+        "pydantic==2.11.7",
+        "diffusers==0.42.1",
+        "sentencepiece==0.2.1",
+        "protobuf==6.32.1",
+        "imageio==2.37.0",
+        "imageio-ffmpeg==0.6.0"
+      ],
+      "notes": [
+        "Explicit official converted repository, not silently substituted for original Wan2.2 files. Safetensors-only, no repository Python.",
+        "Bounded asynchronous MP4 jobs, one active generation, no backlog. No streaming, image-to-video, offload or quantization.",
+        "Bounded A100 80 GB inference and H.264 export tested at 256/5 frames/4 steps and 512/17 frames/30 steps. Both experts are resident; A6000 is blocked. Conservative runtime budget requires explicit --allow-risk on the tested A100."
+      ]
+    }
+  ]
+}

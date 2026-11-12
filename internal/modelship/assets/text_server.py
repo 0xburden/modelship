@@ -15,6 +15,9 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 MODEL = os.environ.get("MODEL_ID", "")
 REVISION = os.environ.get("MODEL_REVISION", "")
 RUN_ID = os.environ.get("MODEL_RUN_ID", "")
+RECIPE = os.environ.get("MODEL_RECIPE", "")
+TEMPLATE_COMPLETIONS = os.environ.get("MODEL_TEMPLATE_COMPLETIONS", "false") == "true"
+DISABLE_THINKING = os.environ.get("MODEL_DISABLE_THINKING", "false") == "true"
 CONTEXT = int(os.environ.get("MODEL_CONTEXT", "4096"))
 TOKENIZER = None
 NETWORK = None
@@ -52,11 +55,28 @@ async def lifespan(app):
     if not MODEL or not REVISION:
         raise RuntimeError("MODEL_ID and immutable MODEL_REVISION are required")
     TOKENIZER = AutoTokenizer.from_pretrained(MODEL, revision=REVISION, trust_remote_code=False)
-    NETWORK = AutoModelForCausalLM.from_pretrained(
-        MODEL, revision=REVISION, torch_dtype=torch.float16,
+    loader_name = os.environ.get("MODEL_NATIVE_LOADER", "causal-lm")
+    dtype_name = os.environ.get("MODEL_DTYPE", "float16")
+    if dtype_name not in ("float16", "bfloat16"):
+        raise RuntimeError("unsupported recipe dtype")
+    dtype = getattr(torch, dtype_name)
+    if loader_name == "multimodal-lm":
+        from transformers import AutoModelForMultimodalLM
+        loader = AutoModelForMultimodalLM
+        dtype_options = {"dtype": dtype, "device_map": "cuda", "low_cpu_mem_usage": True}
+    elif loader_name == "causal-lm":
+        loader = AutoModelForCausalLM
+        dtype_options = {"torch_dtype": dtype}
+    else:
+        raise RuntimeError("unsupported native text loader")
+    NETWORK = loader.from_pretrained(
+        MODEL, revision=REVISION, **dtype_options,
         use_safetensors=True, trust_remote_code=False,
         attn_implementation="eager",
-    ).to("cuda").eval()
+    )
+    if loader_name == "causal-lm":
+        NETWORK = NETWORK.to("cuda")
+    NETWORK = NETWORK.eval()
     yield
     NETWORK = None
     TOKENIZER = None
@@ -69,7 +89,7 @@ app = FastAPI(title="modelship native text", lifespan=lifespan)
 @app.get("/health")
 def health():
     return {"ready": NETWORK is not None, "model": MODEL, "revision": REVISION,
-            "task": "text-generation", "run_id": RUN_ID}
+            "task": "text-generation", "run_id": RUN_ID, "recipe": RECIPE}
 
 
 @app.get("/v1/models")
@@ -85,16 +105,18 @@ def generate(req, chat=False):
     if not BUSY.acquire(blocking=False):
         raise HTTPException(503, "GPU busy; retry after the current request finishes")
     try:
-        if chat:
+        templated = chat or TEMPLATE_COMPLETIONS
+        if templated:
             if not TOKENIZER.chat_template:
-                raise HTTPException(422, "model has no chat template; use /v1/completions")
+                raise HTTPException(422, "model has no chat template for this recipe")
+            messages = [message.model_dump() for message in req.messages] if chat else [{"role": "user", "content": req.prompt}]
             prompt = TOKENIZER.apply_chat_template(
-                [message.model_dump() for message in req.messages],
-                tokenize=False, add_generation_prompt=True,
+                messages, tokenize=False, add_generation_prompt=True,
+                **({"enable_thinking": False} if DISABLE_THINKING else {}),
             )
         else:
             prompt = req.prompt
-        inputs = TOKENIZER(prompt, return_tensors="pt", add_special_tokens=not chat)
+        inputs = TOKENIZER(prompt, return_tensors="pt", add_special_tokens=not templated)
         count = inputs["input_ids"].shape[1]
         if count + req.max_tokens > CONTEXT:
             raise HTTPException(422, "prompt plus max_tokens exceeds the deployment context limit")

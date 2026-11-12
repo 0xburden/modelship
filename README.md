@@ -9,11 +9,12 @@ A GPU-first model deployment CLI: inspect a Hugging Face repository and the loca
 - Linux **amd64**, NVIDIA; one selected GPU per deployment.
 - **Docker backend (default):** local daemon with standard NVIDIA Container Toolkit or provider-managed CDI, conservative CUDA 12.8 driver minimum **570.26**. CDI mode currently requires exactly one visible GPU and is not fully validated on Thunder.
 - **Native backend:** working host CUDA-enabled PyTorch plus Python/venv. No Docker/toolkit installation or hard-coded CUDA driver minimum; actual CUDA computation is checked. See **[NATIVE.md](NATIVE.md)**. This is the recommended path for the current Thunder server.
-- Text: unquantized **safetensors** repositories with explicitly recognized architectures: Llama, Mistral, Qwen2, Qwen3, Gemma, Gemma2, Phi3 causal LMs. Exact architecture names are in `internal/modelship/plan.go`.
+- Text: unquantized **safetensors** repositories with explicitly recognized architectures: Llama, Mistral, Qwen2, Qwen3, Gemma, Gemma2, Phi3 causal LMs. Exact architecture names and dependency profiles are in `internal/modelship/assets/recipes.json`.
 - Images: standard Diffusers repositories whose `model_index.json` declares **StableDiffusionPipeline**, **StableDiffusionXLPipeline**, or **FluxPipeline**. Both text-to-image and image-to-image are selectable; a deployment serves **one task**.
 - Text requires compute capability >=7.5 in Docker / >=7.0 natively; SD/SDXL >=7.0; FLUX >=8.0 (bfloat16).
+- **Feature-branch experimental/native:** Gemma 4 and Qwen3.8 text-only; Qwen Image 2.1 generation/editing; explicitly approved/hash-pinned MOSS images; bounded WAN video via an explicitly selected official Diffusers conversion. These need `--experimental` and model-specific resource/license/code prerequisites. See [MODEL_SUPPORT.md](MODEL_SUPPORT.md) for validation status; unvalidated adapters are not GPU-support guarantees.
 
-Not yet supported: GGUF, single-file image checkpoints, variant-only image repositories, adapters/LoRAs, AWQ/GPTQ/bitsandbytes, custom remote model code, FLUX.2, video, multi-GPU sharding, automatic quantization/offload, or arbitrary model architectures. Matching an architecture is a compatibility filter, **not** proof that every repository variant will load.
+Not yet supported: GGUF, single-file image checkpoints, variant-only image repositories, adapters/LoRAs, AWQ/GPTQ/bitsandbytes, arbitrary remote model code, original WAN PTH checkpoints, FLUX.2, multi-GPU sharding, automatic quantization/offload, or arbitrary model architectures. Matching an architecture is a compatibility filter, **not** proof that every repository variant will load.
 
 ## Build
 
@@ -32,6 +33,10 @@ docker run --rm -v "$PWD:/src" -w /src golang:1.24.4 \
 ```
 
 The Docker command builds for the container's platform. Use `scripts/release.sh` for a Linux amd64 release from any supported Go build host.
+
+## Recipe discovery (feature branch)
+
+The `v0.3.0-alpha.1` release adds host-independent `modelship catalog` and `modelship inspect MODEL [--json]`, isolated dependency profiles, and experimental adapters for the requested model families. Weights-alone VRAM is checked from bounded safetensors headers, separately from download bytes and runtime heuristics. Research-only licensing, reviewed repository-code consent, explicit WAN format selection, and hardware limits remain enforced; nothing is silently substituted or quantized. See **[MODEL_SUPPORT.md](MODEL_SUPPORT.md)** for the requested-model matrix and LoRA roadmap. These additions are not in the published `v0.2.0-alpha.1`.
 
 ## Native quickstart (Thunder / working host PyTorch)
 
@@ -79,12 +84,12 @@ modelship deploy org/model --yes --wait 45m
 ```
 
 - Model URLs must reference the repository root. Select branches/tags/commits with `--revision`; plans resolve them to an immutable commit SHA.
-- Plans list default safetensors weight candidates and their sizes. Runtimes also download tokenizer/config/supporting files. Alternate variant weights are excluded; no model substitution occurs.
+- Plans list default safetensors weight candidates and their sizes, validate bounded tensor headers/shard manifests at the pinned SHA, and compare requested-dtype minimum residency with total **and free** selected-GPU VRAM. Runtimes also download tokenizer/config/supporting files. Alternate variant weights are excluded; no model substitution occurs.
 - Missing weight sizes, unsupported architectures/formats, old drivers, and incompatible GPUs fail clearly.
 - VRAM estimates include a text KV-cache allowance or image-pipeline overhead. Available VRAM, host RAM, and Docker disk are snapshots; competing workloads can invalidate them.
 - vLLM is budgeted at 90% of the selected GPU's currently free VRAM, expressed as a fraction of total VRAM. Other workloads changing after inspection can still cause startup failures.
-- `--allow-risk` overrides **only the VRAM estimate**, not driver/runtime compatibility.
-- Disk/RAM budgets are advisory: loading method, filesystem, existing caches, build cache, and container image sizes affect real requirements.
+- `--allow-risk` overrides **only the runtime VRAM heuristic**, never weights-alone total/free fit, missing/invalid metadata, license/code consent, native cache disk or driver/runtime compatibility.
+- Native missing-weight downloads plus headroom must fit the inspected HF cache filesystem; exact pinned cached weights are accounted for and the cache path is persisted. Docker disk and host-RAM budgets remain advisory. Loading method, dependencies/state filesystem, build cache and supporting files affect real requirements.
 - Plan output containing blockers has a nonzero exit status, including with `--json`.
 - Deploy confirms before runtime installation/download/start. `--yes` is explicit noninteractive consent.
 - Deploy verifies GPU access using a CUDA container, checks that exactly the selected GPU is visible, builds the image service if needed, then starts the model.
@@ -197,7 +202,7 @@ VERSION=v0.2.0 sh scripts/release.sh
 # dist/modelship_linux_amd64, dist/install.sh, dist/SHA256SUMS
 ```
 
-Host all three over HTTPS at a versioned path, e.g. **your own** `https://deploy.example.com/v0.2.0/`, using a static web server on Dokploy, or attach them to a GitHub release. Do not publish a moving "latest" directory as if it were immutable. This repository does not yet have a public release URL.
+Host all three over HTTPS at a versioned path, e.g. **your own** `https://deploy.example.com/v0.2.0/`, using a static web server on Dokploy, or attach them to a GitHub release. Do not publish a moving "latest" directory as if it were immutable. Public releases are hosted at `https://modelship.bubuntu.xyz/`; the current source-controlled version is in `releases/current`.
 
 On the fresh server:
 
@@ -223,12 +228,30 @@ Checksums from the same release host detect corruption, **not a compromised host
 
 ### Optional Dokploy static image
 
-Deploy `Dockerfile.releases` from this Git repository in Dokploy and route an HTTPS domain to container port 80. The multi-stage Dockerfile builds the Linux binary, installer, and checksums itself; `dist/` does not need to be committed or uploaded. Its build argument `RELEASE_VERSION` defaults to `v0.2.0`; set it to a new version for each published release and deploy a fixed Git commit/tag. The service only serves static assets, not model requests or credentials. See **[DEPLOYMENT.md](DEPLOYMENT.md)** for the walkthrough.
+Deploy `Dockerfile.releases` from this Git repository in Dokploy and route an HTTPS domain to container port 80. The multi-stage Dockerfile builds the Linux binary, installer, and checksums itself; `dist/` does not need to be committed or uploaded. The tracked `releases/current` file selects the version (`v0.3.0-alpha.1`); the old `RELEASE_VERSION` build argument is ignored with a warning. The build preserves checksum-pinned prior releases and refuses to overwrite an existing version with different bytes. Deploy a reviewed commit/tag. The service only serves static assets, not model requests or credentials. See **[DEPLOYMENT.md](DEPLOYMENT.md)** for the walkthrough.
+
+## Install WAN from the versioned release
+
+On Linux x86_64 with an idle A10080GB-class GPU, Python>=3.11 and existing working CUDA PyTorch>=2.9, plus sufficient free disk (roughly150GB recommended):
+
+```sh
+export MODELSHIP_RELEASE_BASE=https://modelship.bubuntu.xyz/v0.3.0-alpha.1
+curl -fsSL "$MODELSHIP_RELEASE_BASE/install.sh" -o /tmp/modelship-install.sh
+# Inspect this trusted script before running it.
+sh /tmp/modelship-install.sh deploy Wan-AI/Wan2.2-T2V-A14B \
+  --backend native --python python3 --experimental \
+  --weights-repo Wan-AI/Wan2.2-T2V-A14B-Diffusers \
+  --revision 5be7df9619b54f4e2667b2755bc6a756675b5cd7 \
+  --task text-to-video --name wan-video --port 18032 \
+  --allow-risk --wait 90m --yes
+```
+
+`--allow-risk` acknowledges the conservative activation estimate on the tested80GB configuration. It cannot bypass hard weights/free-VRAM/disk checks. No host PyTorch/driver replacement, quantization or offload is enabled. The API binds to localhost; use an SSH/private tunnel for the console, never publicly expose this unauthenticated model service. The new binary replaces `~/.local/bin/modelship` unless `MODELSHIP_INSTALL_DIR` is set.
 
 ## Security and operational limits
 
 - No shell evaluation of model metadata; subprocesses receive argument arrays.
-- No custom Hugging Face remote code; safetensors only for model loading. This reduces, but does not eliminate, supply-chain risk.
+- Safetensors-only model loading; no automatic repository-code execution. The one reviewed MOSS revision requires separate explicit `--trust-model-code` approval and three SHA-256 checks before local loading. This runs as your user, not in a sandbox. All other loaders keep `trust_remote_code=False`. This reduces, but does not eliminate, supply-chain risk.
 - `HF_TOKEN` is forwarded by environment name, not included in CLI argument values or plans. Docker administrators can inspect container environments; use read-only, scoped tokens and a trusted server. Runtime libraries may write token-related state in their cache; treat caches as private.
 - Standard NVIDIA mode selects one GPU UUID. CDI mode uses the provider's all-device alias only when exactly one GPU is visible, and preflight verifies visibility. Containers are not `--privileged`; capabilities are dropped and privilege escalation is disabled. Diffusers runs non-root; upstream vLLM retains its image's user.
 - Docker daemon access is effectively root-equivalent. Model and runtime/container content must be trusted.
@@ -256,7 +279,7 @@ MODELSHIP_LIVE_TEST=1 go test ./internal/modelship -run TestLiveHubMetadata -v
 
 Those checks build plans for Qwen2.5-3B and SDXL against simulated GPU capacity; they are not hardware benchmarks.
 
-Native end-to-end CLI tests have passed on Thunder/A6000 for Qwen text and SDXL generation/editing; see **[VALIDATION.md](VALIDATION.md)** for exact scope, timings, and remaining checks. Before production, validate your own models/hardware, sustained load and failures, resource usage, and exposure controls. FLUX and Docker GPU inference remain unvalidated in this run.
+Native end-to-end CLI tests have passed on Thunder/A6000 for Qwen text, Gemma 4 text, SDXL generation/editing, Qwen Image 2.1 generation/editing, explicitly approved pinned MOSS generation, and bounded WAN video/H.264 export on a separate A100 80 GB; see **[VALIDATION.md](VALIDATION.md)** for exact scope, timings, and remaining checks. Before production, validate your own models/hardware, sustained load and failures, resource usage, and exposure controls. FLUX and Docker GPU inference remain unvalidated in this run.
 
 ## Layout
 
@@ -265,12 +288,18 @@ cmd/modelship/                 Go entrypoint
 internal/modelship/
   hub.go                       Hugging Face metadata/config inspection
   hardware.go                  NVIDIA, driver, RAM, Docker/disk discovery
-  plan.go                      Explicit compatibility and resource rules
+  plan.go                      Compatibility and resource planning
+  weight_metadata.go           Bounded safetensors header/shard validation
+  weight_runtime.go            Fresh total/free VRAM checks before launch
+  cache.go                     Native cache location, cached bytes, disk space
+  recipe_policy.go             Research/code consent and explicit WAN selection
+  recipes.go                   Versioned embedded recipe validation/matching
+  inspect.go                   Hardware-independent metadata inspection/catalog
   deploy.go                    Containers, cache, readiness, lifecycle, text smoke
   gpu_access.go                Standard NVIDIA / Thunder Compute CDI GPU access
   native.go                    Native environment, CUDA preflight, worker lifecycle
   cli.go                       CLI/confirmation
-  assets/                      Embedded image Dockerfile + FastAPI service
+  assets/                      Embedded recipes, text/image/video APIs, reviewed-code gate
 install.sh                     HTTPS/checksum/bootstrap
 scripts/release.sh             Linux release packaging
 Dockerfile.releases            Source-built static release hosting
@@ -278,4 +307,5 @@ DEPLOYMENT.md                  GitHub/Dokploy publishing and curl test walkthrou
 tests/                         Bootstrap, image/text API, native CLI integration tests
 NATIVE.md                      Native deployment guide
 VALIDATION.md                  GPU baseline results and outstanding checks
+MODEL_SUPPORT.md               New-model profiles, size/license blockers, LoRA roadmap
 ```

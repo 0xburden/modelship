@@ -21,6 +21,11 @@ type GPU struct {
 	Compute  string `json:"compute_capability"`
 }
 type Host struct {
+	ModelCacheDir       string `json:"model_cache_dir,omitempty"`
+	ModelCacheFreeMiB   int64  `json:"model_cache_free_mib,omitempty"`
+	CachedWeightBytes   int64  `json:"cached_weight_bytes,omitempty"`
+	ModelCacheInspected bool   `json:"model_cache_inspected,omitempty"`
+
 	OS                string   `json:"os"`
 	Arch              string   `json:"arch"`
 	GPUs              []GPU    `json:"gpus"`

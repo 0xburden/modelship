@@ -22,7 +22,7 @@ jobs:
       - run: python3 -m pip install -r tests/requirements.txt
       - run: go build -o bin/modelship-test ./cmd/modelship
       - run: MODELSHIP_TEST_BINARY="$PWD/bin/modelship-test" python3 -m unittest discover -s tests -v
-      - run: sh -n install.sh scripts/release.sh
+      - run: sh -n install.sh scripts/release.sh scripts/build-release-site.sh
       - run: VERSION=v0.2.0-dev sh scripts/release.sh
       - uses: actions/upload-artifact@v4
         with:

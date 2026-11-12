@@ -22,6 +22,7 @@ def main():
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--input", type=Path)
+    parser.add_argument("--expect-completion-substring", help="optional semantic check for the France completion, e.g. Paris")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True, mode=0o700)
     base = f"http://127.0.0.1:{args.port}"
@@ -35,7 +36,11 @@ def main():
             with urllib.request.urlopen(req, timeout=600) as response:
                 return response.status, json.load(response), time.monotonic() - start
         except urllib.error.HTTPError as exc:
-            return exc.code, json.load(exc), time.monotonic() - start
+            try:
+                result = json.load(exc)
+            except (ValueError, UnicodeDecodeError):
+                result = {"detail": "non-JSON error response; inspect private service log"}
+            return exc.code, result, time.monotonic() - start
 
     def check(label, path, body=None, status=200):
         actual, result, elapsed = request(path, body)
@@ -53,6 +58,8 @@ def main():
         assert model in [entry["id"] for entry in models["data"]]
         completion = check("completion", "/v1/completions", {"model": model, "prompt": "The capital of France is", "max_tokens": 16, "temperature": 0})
         assert completion["choices"][0]["text"].strip()
+        if args.expect_completion_substring:
+            assert args.expect_completion_substring.lower() in completion["choices"][0]["text"].lower(), completion["choices"][0]["text"]
         chat = check("chat", "/v1/chat/completions", {"model": model, "messages": [{"role": "user", "content": "Explain what a GPU does in one short sentence."}], "max_tokens": 64, "temperature": 0})
         assert chat["choices"][0]["message"]["content"].strip()
         check("unknown-model", "/v1/completions", {"model": "missing/model", "prompt": "x"}, status=404)
@@ -78,10 +85,14 @@ def main():
         else:
             encoded = None
             sizes = (512, 1024)
+        pipeline = health.get("pipeline", "")
+        guidance = 1.0 if pipeline == "QwenImage21Pipeline" else 3.0 if pipeline == "MOSSImagePipeline" else 7.0
         for size in sizes:
-            body = {"prompt": "A small mountain observatory at sunset, watercolor painting" if encoded is None else "A small mountain observatory at night beneath a starry sky, watercolor painting", "width": size, "height": size, "steps": 20, "guidance_scale": 7.0, "seed": 42 if encoded is None else 43}
+            body = {"prompt": "A small mountain observatory at sunset, watercolor painting" if encoded is None else "A small mountain observatory at night beneath a starry sky, watercolor painting", "width": size, "height": size, "steps": 20, "guidance_scale": guidance, "seed": 42 if encoded is None else 43}
             if encoded is not None:
-                body.update(image_b64=encoded, strength=0.65)
+                body.update(image_b64=encoded)
+                if pipeline != "QwenImage21Pipeline":
+                    body["strength"] = 0.65
             result = check(f"{args.task}-{size}", endpoint, body)
             data = base64.b64decode(result["data"][0]["b64_json"], validate=True)
             assert data.startswith(b"\x89PNG\r\n\x1a\n")

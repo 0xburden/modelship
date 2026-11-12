@@ -2,6 +2,9 @@
 import base64
 import binascii
 import io
+import json
+import math
+import re
 import os
 import secrets
 import threading
@@ -32,21 +35,30 @@ class Generation(BaseModel):
     width: int = Field(default=512, ge=256, le=1024)
     height: int = Field(default=512, ge=256, le=1024)
     steps: int = Field(default=28, ge=1, le=100)
-    guidance_scale: float = Field(default=7.0, ge=0, le=20)
+    guidance_scale: float | None = Field(default=None, ge=0, le=20)
     seed: int | None = Field(default=None, ge=0, lt=2**63)
     image_b64: str | None = Field(default=None, max_length=22_369_624)
-    strength: float = Field(default=0.7, gt=0, le=1)
+    strength: float | None = Field(default=None, gt=0, le=1)
 
     @model_validator(mode="after")
     def dimensions(self):
         if self.width % 8 or self.height % 8:
             raise ValueError("width and height must be multiples of 8")
-        if int(self.steps * self.strength) < 1 and self.image_b64:
+        if PIPELINE == "QwenImage21Pipeline":
+            if self.width % 32 or self.height % 32:
+                raise ValueError("Qwen Image dimensions must be multiples of 32")
+            if self.strength is not None:
+                raise ValueError("Qwen Image uses image conditioning, not strength-based img2img")
+        elif PIPELINE == "MOSSImagePipeline" and (self.width % 16 or self.height % 16):
+            raise ValueError("MOSS dimensions must be multiples of 16")
+        if PIPELINE in ("QwenImage21Pipeline", "MOSSImagePipeline") and len(self.prompt) > 4096:
+            raise ValueError("this pipeline accepts at most 4096 prompt characters")
+        if PIPELINE != "QwenImage21Pipeline" and int(self.steps * (self.strength or 0.7)) < 1 and self.image_b64:
             raise ValueError("steps * strength must be >= 1")
         return self
 
 
-def decode_image(encoded, width, height):
+def decode_image(encoded, width, height, mode="RGB"):
     try:
         raw = base64.b64decode(encoded, validate=True)
         if len(raw) > 16 * 1024 * 1024:
@@ -55,26 +67,66 @@ def decode_image(encoded, width, height):
             if image.width * image.height > Image.MAX_IMAGE_PIXELS:
                 raise ValueError("input image exceeds pixel limit")
             image.load()
-            return image.convert("RGB").resize((width, height), Image.Resampling.LANCZOS)
+            return image.convert(mode).resize((width, height), Image.Resampling.LANCZOS)
     except (ValueError, binascii.Error, UnidentifiedImageError, OSError,
             Image.DecompressionBombError) as exc:
         raise HTTPException(422, "invalid or oversized base64 image") from exc
 
 
+def load_pipeline():
+    if not MODEL or not re.fullmatch(r"[a-f0-9]{40}", REVISION):
+        raise RuntimeError("MODEL_ID and immutable MODEL_REVISION are required")
+    modern = PIPELINE in ("QwenImage21Pipeline", "MOSSImagePipeline")
+    dtype_name = os.environ.get("MODEL_DTYPE", "bfloat16" if modern or PIPELINE == "FluxPipeline" else "float16")
+    if dtype_name not in ("float16", "bfloat16"):
+        raise RuntimeError("unsupported image recipe dtype")
+    dtype = getattr(torch, dtype_name)
+    components = json.loads(os.environ.get("MODEL_COMPONENT_DTYPES", "{}"))
+    if modern:
+        components["vae"] = "float32"
+    if any(value not in ("float16", "bfloat16", "float32") for value in components.values()):
+        raise RuntimeError("unsupported component dtype")
+    dtypes = {"default": dtype, **{name: getattr(torch, value) for name, value in components.items()}} if components else dtype
+    if PIPELINE == "QwenImage21Pipeline":
+        if os.environ.get("MODEL_RESEARCH") != "true":
+            raise RuntimeError("Qwen Image requires --research acknowledgment of non-commercial use")
+        from diffusers import QwenImage21Pipeline
+
+        class ModelshipQwenImage21Pipeline(QwenImage21Pipeline):
+            def _encode_vae_image(self, image, generator):
+                # Diffusers 0.42.1 casts conditioning pixels to the text/DiT
+                # dtype, even when the VAE is explicitly FP32. Encode in VAE
+                # precision, normalize there, then return latents in the input
+                # precision so concatenation cannot upcast the BF16 DiT input.
+                input_dtype = image.dtype
+                encoded = super()._encode_vae_image(image.to(dtype=self.vae.dtype), generator)
+                return encoded.to(dtype=input_dtype)
+
+        loader = ModelshipQwenImage21Pipeline
+    elif PIPELINE == "MOSSImagePipeline":
+        if TASK != "text-to-image":
+            raise RuntimeError("MOSS only supports text-to-image")
+        from model_code import load_moss_pipeline
+        return load_moss_pipeline(MODEL, REVISION, dtypes)
+    else:
+        loader = AutoPipelineForImage2Image if TASK == "image-to-image" else AutoPipelineForText2Image
+    return loader.from_pretrained(
+        MODEL, revision=REVISION, torch_dtype=dtypes,
+        use_safetensors=True, trust_remote_code=False, low_cpu_mem_usage=True,
+        **({"device_map": "cuda"} if modern else {}),
+    )
+
+
 @asynccontextmanager
 async def lifespan(app):
     global PIPE
-    if not MODEL or not REVISION:
-        raise RuntimeError("MODEL_ID and immutable MODEL_REVISION are required")
-    loader = AutoPipelineForImage2Image if TASK == "image-to-image" else AutoPipelineForText2Image
-    dtype = torch.bfloat16 if PIPELINE == "FluxPipeline" else torch.float16
-    PIPE = loader.from_pretrained(
-        MODEL, revision=REVISION, torch_dtype=dtype,
-        use_safetensors=True, trust_remote_code=False,
-        low_cpu_mem_usage=True,
-    ).to("cuda")
-    PIPE.vae.enable_slicing()
-    PIPE.vae.enable_tiling()
+    PIPE = load_pipeline()
+    if PIPELINE not in ("QwenImage21Pipeline", "MOSSImagePipeline"):
+        PIPE = PIPE.to("cuda")
+    for name in ("enable_slicing", "enable_tiling"):
+        method = getattr(PIPE.vae, name, None)
+        if callable(method):
+            method()
     PIPE.set_progress_bar_config(disable=True)
     yield
     PIPE = None
@@ -87,7 +139,8 @@ app = FastAPI(title="modelship images", lifespan=lifespan)
 @app.get("/health")
 def health():
     return {"ready": PIPE is not None, "model": MODEL, "revision": REVISION,
-            "task": TASK, "run_id": os.environ.get("MODEL_RUN_ID", "")}
+            "task": TASK, "pipeline": PIPELINE, "recipe": os.environ.get("MODEL_RECIPE", ""),
+            "run_id": os.environ.get("MODEL_RUN_ID", "")}
 
 
 def generate(req):
@@ -97,11 +150,25 @@ def generate(req):
         seed = req.seed if req.seed is not None else secrets.randbelow(2**63)
         args = dict(
             prompt=req.prompt, num_inference_steps=req.steps,
-            guidance_scale=req.guidance_scale,
-            generator=torch.Generator(device="cuda").manual_seed(seed),
+            guidance_scale=req.guidance_scale if req.guidance_scale is not None else (
+                1.0 if PIPELINE == "QwenImage21Pipeline" else 3.0 if PIPELINE == "MOSSImagePipeline" else 7.0),
+            generator=torch.Generator(device="cpu" if PIPELINE == "MOSSImagePipeline" else "cuda").manual_seed(seed),
             width=req.width, height=req.height,
         )
-        if PIPELINE == "FluxPipeline":
+        if PIPELINE == "QwenImage21Pipeline":
+            args["true_cfg_scale"] = args.pop("guidance_scale")
+            # Condition images otherwise default to 1024-pixel preprocessing even
+            # for a 256/512 request, escaping this service's image memory budget.
+            args["output_resolution"] = math.isqrt(req.width * req.height) // 32 * 32
+            if req.negative_prompt is not None and args["true_cfg_scale"] <= 1:
+                raise HTTPException(422, "negative_prompt requires guidance_scale > 1 for Qwen Image")
+            if args["true_cfg_scale"] > 1:
+                args["negative_prompt"] = req.negative_prompt or ""
+        elif PIPELINE == "MOSSImagePipeline":
+            args["max_sequence_length"] = 512
+            if req.negative_prompt is not None:
+                args["negative_prompt"] = req.negative_prompt
+        elif PIPELINE == "FluxPipeline":
             # FLUX defaults may otherwise consume far more memory than this service budgets.
             args["max_sequence_length"] = 256
             if req.negative_prompt is not None:
@@ -111,10 +178,11 @@ def generate(req):
         if TASK == "image-to-image":
             if not req.image_b64:
                 raise HTTPException(422, "image_b64 is required for image-to-image")
-            args["image"] = decode_image(req.image_b64, req.width, req.height)
-            args["strength"] = req.strength
+            args["image"] = decode_image(req.image_b64, req.width, req.height, "RGBA" if PIPELINE == "QwenImage21Pipeline" else "RGB")
+            if PIPELINE != "QwenImage21Pipeline":
+                args["strength"] = req.strength if req.strength is not None else 0.7
             # SD/SDXL img2img gets dimensions from the resized input image.
-            if PIPELINE != "FluxPipeline":
+            if PIPELINE not in ("FluxPipeline", "QwenImage21Pipeline"):
                 args.pop("width")
                 args.pop("height")
         elif req.image_b64 is not None:

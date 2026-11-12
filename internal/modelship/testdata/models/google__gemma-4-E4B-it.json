@@ -1,0 +1,49 @@
+{
+  "source": "https://huggingface.co/google/gemma-4-E4B-it/tree/4ecc2ba63bcac23ba4a767fc87025b1450f84c9c",
+  "hub": {
+    "id": "google/gemma-4-E4B-it",
+    "sha": "4ecc2ba63bcac23ba4a767fc87025b1450f84c9c",
+    "pipeline_tag": "any-to-any",
+    "library_name": "transformers",
+    "gated": false,
+    "safetensors": {
+      "parameters": {
+        "BF16": 7996156490
+      },
+      "total": 7996156490
+    },
+    "cardData": {
+      "license": "apache-2.0"
+    },
+    "siblings": [
+      {
+        "rfilename": "model.safetensors",
+        "blobId": "80f2abf077d9a1a8ac61833d372ef77085cc9864",
+        "size": 15992595884,
+        "lfs": {
+          "sha256": "cfbd3d2f1cd71bd471c37fe2bf8546d5028d41e5736f64e1ca6c6b8893125503",
+          "size": 15992595884,
+          "pointerSize": 136
+        }
+      }
+    ]
+  },
+  "config": {
+    "architectures": [
+      "Gemma4ForConditionalGeneration"
+    ],
+    "model_type": "gemma4",
+    "text_config": {
+      "head_dim": 256,
+      "hidden_size": 2560,
+      "max_position_embeddings": 131072,
+      "model_type": "gemma4_text",
+      "num_attention_heads": 8,
+      "num_hidden_layers": 42,
+      "num_key_value_heads": 2
+    },
+    "transformers_version": "5.5.0.dev0"
+  },
+  "index": {},
+  "source_config": "config.json"
+}

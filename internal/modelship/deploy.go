@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -35,11 +36,13 @@ func output(ctx context.Context, args ...string) (string, error) {
 func BuildArgs(p Plan) []string {
 	args := []string{"run", "--detach", "--name", p.Name, "--label", managedLabel,
 		"--label", "io.modelship.model=" + p.Model, "--label", "io.modelship.revision=" + p.Revision,
+		"--label", "io.modelship.resident-bytes=" + strconv.FormatInt(p.WeightResidentBytes, 10),
+		"--label", "io.modelship.gpu-uuid=" + p.GPU.UUID,
 		"--restart", "unless-stopped",
 		"--publish", fmt.Sprintf("127.0.0.1:%d:8000", p.Port),
 		"--security-opt", "no-new-privileges", "--cap-drop", "ALL",
 		"--shm-size", "2g", "--mount", "type=volume,source=modelship-hf-cache,target=/cache/huggingface",
-		"--env", "HF_HOME=/cache/huggingface", "--env", "HF_HUB_DISABLE_TELEMETRY=1"}
+		"--env", "HF_HOME=/cache/huggingface", "--env", "HF_HUB_DISABLE_TELEMETRY=1", "--env", "USE_HUB_KERNELS=NO"}
 	args = append(args, GPUArgs(p)...)
 	if os.Getenv("HF_TOKEN") != "" {
 		args = append(args, "--env", "HF_TOKEN")
@@ -81,6 +84,9 @@ func Deploy(ctx context.Context, p Plan, wait time.Duration) error {
 	if len(p.Blockers) > 0 {
 		return fmt.Errorf("deployment blocked: %s", strings.Join(p.Blockers, "; "))
 	}
+	if err := verifyWeightFitNow(ctx, p); err != nil {
+		return err
+	}
 	// Both metadata discovery and Docker must refer to this local server.
 	endpoint, err := output(ctx, "context", "inspect", "--format", "{{.Endpoints.docker.Host}}")
 	if err != nil {
@@ -105,6 +111,9 @@ func Deploy(ctx context.Context, p Plan, wait time.Duration) error {
 		if err = buildImages(ctx); err != nil {
 			return fmt.Errorf("build image runtime: %w", err)
 		}
+	}
+	if err = verifyWeightFitNow(ctx, p); err != nil {
+		return err
 	}
 	// Separate volumes avoid ownership conflicts between vLLM root and Diffusers uid 10001.
 	args := BuildArgs(p)
@@ -182,6 +191,28 @@ func Manage(ctx context.Context, action, name string) error {
 	case "stop":
 		return docker(ctx, "stop", name)
 	case "start":
+		// Read only labels/running state, never Config.Env (which may hold tokens).
+		state, err := output(ctx, "inspect", "--format", `{"running":{{.State.Running}},"labels":{{json .Config.Labels}}}`, name)
+		if err != nil {
+			return fmt.Errorf("cannot inspect deployment memory metadata")
+		}
+		var info struct {
+			Running bool              `json:"running"`
+			Labels  map[string]string `json:"labels"`
+		}
+		if err = json.Unmarshal([]byte(state), &info); err != nil {
+			return fmt.Errorf("invalid deployment memory metadata")
+		}
+		if !info.Running && info.Labels["io.modelship.resident-bytes"] != "" {
+			resident, err := strconv.ParseInt(info.Labels["io.modelship.resident-bytes"], 10, 64)
+			if err != nil || resident <= 0 {
+				return fmt.Errorf("invalid deployment weight budget; re-plan and redeploy")
+			}
+			p := Plan{WeightResidentBytes: resident, GPU: GPU{UUID: info.Labels["io.modelship.gpu-uuid"]}}
+			if err = verifyWeightFitNow(ctx, p); err != nil {
+				return err
+			}
+		}
 		return docker(ctx, "start", name)
 	case "uninstall":
 		return docker(ctx, "rm", "--force", name)

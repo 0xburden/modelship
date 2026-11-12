@@ -25,7 +25,13 @@ type TorchInfo struct {
 	File           string `json:"torch_file"`
 	CUDA           string `json:"cuda_version"`
 	GPU            string `json:"gpu"`
+	PythonVersion  string `json:"python_version,omitempty"`
 }
+
+// Schema 3 records research/code consent, component dtypes and cache paths.
+// Older CLIs must reject it instead of ignoring these execution constraints.
+const nativeSchemaVersion = 3
+
 type NativeConfig struct {
 	Schema int       `json:"schema"`
 	Plan   Plan      `json:"plan"`
@@ -111,7 +117,7 @@ func nativeConfig(name string) (NativeConfig, string, error) {
 	if err = readJSONFile(filepath.Join(dir, "config.json"), &cfg); err != nil {
 		return cfg, dir, fmt.Errorf("read native deployment %s: %w", name, err)
 	}
-	if cfg.Schema != 1 || cfg.Plan.Backend != "native" || cfg.Plan.Name != name || !commitPattern.MatchString(cfg.Plan.Revision) || cfg.Plan.Port < 1024 || cfg.Plan.Port > 65535 {
+	if (cfg.Schema != 1 && cfg.Schema != 2 && cfg.Schema != nativeSchemaVersion) || cfg.Plan.Backend != "native" || cfg.Plan.Name != name || !commitPattern.MatchString(cfg.Plan.Revision) || cfg.Plan.Port < 1024 || cfg.Plan.Port > 65535 {
 		return cfg, dir, fmt.Errorf("invalid native deployment metadata")
 	}
 	return cfg, dir, nil
@@ -128,11 +134,39 @@ func nativeLock(dir string) (func(), error) {
 	return func() { syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }, nil
 }
 func nativeEnv(p Plan, runID string) []string {
+	dtype, loader := p.DType, p.NativeLoader
+	if dtype == "" {
+		dtype = "float16"
+	}
+	if loader == "" {
+		loader = "causal-lm"
+	}
+	encoded := func(value any, empty string) string {
+		data, _ := json.Marshal(value)
+		if string(data) == "null" {
+			return empty
+		}
+		return string(data)
+	}
+	artifactDir := ""
+	if dir, err := nativeDir(p.Name); err == nil {
+		artifactDir = filepath.Join(dir, "artifacts")
+	}
 	overrides := map[string]string{
+		"MODEL_COMPONENT_DTYPES": encoded(p.ComponentDTypes, "{}"),
+		"MODEL_RESEARCH":         strconv.FormatBool(p.Research), "MODEL_TRUST_CODE": strconv.FormatBool(p.TrustModelCode),
+		"MODEL_CODE_REVISION": p.CodeRevision, "MODEL_CODE_HASHES": encoded(p.CodeHashes, "{}"),
+		"MODEL_WEIGHT_FILES": encoded(p.Files, "[]"), "MODEL_ARTIFACT_DIR": artifactDir,
+		"MODEL_REQUESTED_ID": p.RequestedModel,
+		"MODEL_DTYPE":        dtype, "MODEL_NATIVE_LOADER": loader, "MODEL_RECIPE": p.RecipeID,
+		"MODEL_TEMPLATE_COMPLETIONS": strconv.FormatBool(p.TemplateCompletions), "MODEL_DISABLE_THINKING": strconv.FormatBool(p.DisableThinking),
 		"CUDA_VISIBLE_DEVICES": p.GPU.UUID, "MODEL_ID": p.Model, "MODEL_REVISION": p.Revision,
 		"MODEL_TASK": p.Task, "MODEL_PIPELINE": p.Pipeline, "MODEL_CONTEXT": strconv.Itoa(p.Context),
 		"MODEL_PORT": strconv.Itoa(p.Port), "MODEL_RUN_ID": runID, "PYTHONUNBUFFERED": "1",
-		"HF_HUB_DISABLE_TELEMETRY": "1",
+		"HF_HUB_DISABLE_TELEMETRY": "1", "USE_HUB_KERNELS": "NO",
+	}
+	if p.ModelCacheDir != "" {
+		overrides["HF_HUB_CACHE"] = p.ModelCacheDir
 	}
 	var env []string
 	for _, item := range os.Environ() {
@@ -173,6 +207,9 @@ func DeployNative(ctx context.Context, p Plan, wait time.Duration) error {
 	if len(p.Blockers) > 0 {
 		return fmt.Errorf("deployment blocked: %s", strings.Join(p.Blockers, "; "))
 	}
+	if err := verifyWeightFitNow(ctx, p); err != nil {
+		return err
+	}
 	python, err := exec.LookPath(p.Python)
 	if err != nil {
 		return fmt.Errorf("base Python not found: %w", err)
@@ -199,7 +236,7 @@ func DeployNative(ctx context.Context, p Plan, wait time.Duration) error {
 		return err
 	}
 	defer unlock()
-	cfg := NativeConfig{Schema: 1, Plan: p}
+	cfg := NativeConfig{Schema: nativeSchemaVersion, Plan: p}
 	if err = writeJSONFile(filepath.Join(dir, "config.json"), cfg); err != nil {
 		return err
 	}
@@ -207,12 +244,24 @@ func DeployNative(ctx context.Context, p Plan, wait time.Duration) error {
 	if err != nil {
 		return err
 	}
+	if p.MinPython != "" {
+		var major, minor int
+		if _, err := fmt.Sscanf(p.MinPython, "%d.%d", &major, &minor); err != nil || !driverAtLeast(before.PythonVersion, major, minor) {
+			return fmt.Errorf("recipe %s requires Python >= %s; selected Python reports %q", p.RecipeID, p.MinPython, before.PythonVersion)
+		}
+	}
+	if p.MinTorch != "" {
+		var major, minor int
+		if _, err := fmt.Sscanf(p.MinTorch, "%d.%d", &major, &minor); err != nil || !driverAtLeast(before.Version, major, minor) {
+			return fmt.Errorf("recipe %s requires PyTorch >= %s; selected Python reports %q (Modelship will not replace host PyTorch)", p.RecipeID, p.MinTorch, before.Version)
+		}
+	}
 	fmt.Printf("Native PyTorch: %s · CUDA %s · %s\n", before.Version, before.CUDA, before.GPU)
 	cfg.Torch = before
 	if err = writeJSONFile(filepath.Join(dir, "config.json"), cfg); err != nil {
 		return err
 	}
-	for _, name := range []string{"native_entry.py", "server.py", "text_server.py"} {
+	for _, name := range []string{"native_entry.py", "server.py", "text_server.py", "model_code.py", "video_server.py"} {
 		b, e := assets.ReadFile("assets/" + name)
 		if e != nil {
 			return e
@@ -239,9 +288,9 @@ func DeployNative(ctx context.Context, p Plan, wait time.Duration) error {
 	if err = os.WriteFile(constraint, []byte("torch==="+before.PackageVersion+"\n"), 0600); err != nil {
 		return err
 	}
-	requirements := []string{"transformers==4.56.2", "huggingface-hub==0.36.0", "safetensors==0.6.2", "fastapi==0.116.1", "uvicorn==0.35.0", "pydantic==2.11.7"}
-	if p.Runtime == "diffusers" {
-		requirements = append(requirements, "diffusers==0.35.1", "accelerate==1.10.1", "pillow==11.3.0", "sentencepiece==0.2.1", "protobuf==6.32.1")
+	requirements, err := nativeRequirements(p)
+	if err != nil {
+		return err
 	}
 	requirementsPath := filepath.Join(dir, "requirements.txt")
 	if err = os.WriteFile(requirementsPath, []byte(strings.Join(requirements, "\n")+"\n"), 0600); err != nil {
@@ -270,6 +319,9 @@ func startNative(ctx context.Context, cfg NativeConfig, dir string, wait time.Du
 	old, err := loadNativeRun(dir)
 	if err == nil && nativeAlive(dir, old) {
 		return fmt.Errorf("native deployment already running (PID %d)", old.PID)
+	}
+	if err := verifyWeightFitNow(ctx, cfg.Plan); err != nil {
+		return err
 	}
 	listener, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", cfg.Plan.Port))
 	if err != nil {
