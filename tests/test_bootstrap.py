@@ -83,7 +83,7 @@ cp "$FIXTURE_RELEASE/$(basename "$url")" "$out"
         self.assertNotEqual(self.run_installer().returncode, 0)
 
     def recording_binary(self):
-        artifact = b'#!/bin/sh\nprintf "%s\\n" "$*" > "$FIXTURE_ARGS"\nprintf "fixture-version\\n"\n'
+        artifact = b'#!/bin/sh\nif [ "$1" = help ]; then printf "  launch guided setup\\n"; exit 0; fi\nprintf "%s\\n" "$*" > "$FIXTURE_ARGS"\nprintf "fixture-version\\n"\n'
         (self.release/'modelship_linux_amd64').write_bytes(artifact)
         digest=hashlib.sha256(artifact).hexdigest()
         (self.release/'SHA256SUMS').write_text(f'{digest}  modelship_linux_amd64\n')
@@ -131,6 +131,22 @@ cp "$FIXTURE_RELEASE/$(basename "$url")" "$out"
         result=self.run_installer('version')
         self.assertNotEqual(result.returncode,0)
         self.assertIn('Source installer requires',result.stderr)
+
+    def test_terminal_override_to_older_cli_does_not_call_missing_launch(self):
+        self.recording_binary()
+        artifact=b'#!/bin/sh\nprintf "%s\\n" "$*" > "$FIXTURE_ARGS"\nprintf "older fixture\\n"\n'
+        (self.release/'modelship_linux_amd64').write_bytes(artifact)
+        digest=hashlib.sha256(artifact).hexdigest()
+        (self.release/'SHA256SUMS').write_text(f'{digest}  modelship_linux_amd64\n')
+        baked=self.root/'install-published.sh'
+        baked.write_text((ROOT/'install.sh').read_text().replace('__MODELSHIP_RELEASE_BASE__','https://fixture.example/v9.8.7'))
+        master,slave=pty.openpty()
+        try:
+            process=subprocess.Popen(['sh',str(baked)],env=self.env,stdin=slave,stdout=slave,stderr=slave)
+            self.assertEqual(process.wait(timeout=15),0)
+        finally:
+            os.close(master);os.close(slave)
+        self.assertEqual((self.root/'arguments').read_text().strip(),'version')
 
 
 if __name__ == "__main__":

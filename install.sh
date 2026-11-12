@@ -9,6 +9,11 @@ if [ -z "${MODELSHIP_RELEASE_BASE:-}" ]; then
   esac
 fi
 case "$MODELSHIP_RELEASE_BASE" in https://*) ;; *) echo "Release base must use HTTPS" >&2; exit 1;; esac
+case "$release_default" in
+  https://*) if [ "$MODELSHIP_RELEASE_BASE" != "$release_default" ]; then
+    echo "Using MODELSHIP_RELEASE_BASE override rather than this installer's baked release URL." >&2
+  fi ;;
+esac
 case "$(uname -s)/$(uname -m)" in
   Linux/x86_64) asset=modelship_linux_amd64 ;;
   *) echo "This MVP supports Linux x86_64 NVIDIA servers only." >&2; exit 1 ;;
@@ -47,7 +52,12 @@ if [ "$#" -gt 0 ]; then
   exec "$dest/modelship" "$@"
 fi
 if [ -t 0 ] && [ -t 1 ]; then
-  exec "$dest/modelship" launch
+  # An explicit base override can deliberately install an older CLI. Do not
+  # invoke a command that version does not implement.
+  if "$dest/modelship" help | grep -q '^  launch[[:space:]]'; then
+    exec "$dest/modelship" launch
+  fi
+  echo "Selected CLI has no guided launch; installed without setup." >&2
 fi
 "$dest/modelship" version
 printf 'Installed without interactive setup. Run %s launch from a terminal, or use deploy MODEL --yes for automation.\n' "$dest/modelship" >&2
