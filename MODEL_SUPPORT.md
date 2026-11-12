@@ -87,6 +87,16 @@ Individual post-fix request timings were 4.680 s for the completion and 5.431 s 
 
 On that development server, the feature binary is installed separately as `~/.local/bin/modelship-dev`. Gemma is retained as `gemma4-e4b-test` on localhost port 8003; Qwen as `qwen-regression` on 8000. Use the development CLI for their schema-2 lifecycle, not the published alpha CLI. Neither service has public HTTP forwarding configured.
 
+## User-reported compatible checkpoints
+
+These reports are **separate from independently reproduced GPU validation**. They do not promote a recipe to supported status, bypass safety checks, or establish compatibility for every variant in the family.
+
+| Repository | Report | Evidence limitations |
+| --- | --- | --- |
+| [`llmfan46/gemma-4-E4B-it-ultra-uncensored-heretic`](https://huggingface.co/llmfan46/gemma-4-E4B-it-ultra-uncensored-heretic) | User reported that guided setup succeeded and the Gemma variant worked, following the v0.3.0-alpha.3 wizard rollout. | Exact installed CLI version, pinned model revision, hardware, selected options, prompts, outputs and quantitative checks were not collected. Not independently downloaded, inspected or GPU-tested for this report. |
+
+Gemma-family checkpoints can match the existing `gemma4-text` recipe by recognized architecture/layout; this report does **not** add a special repository allowlist or broaden arbitrary-code/quantized-format support. A synthetic metadata regression checks that family matching continues to work under this alternate repository name; it is not evidence about the real repository's weights, quality, license or inference behavior. Review the checkpoint's own terms and the exact pinned deployment plan.
+
 ## Weights-alone VRAM and disk preflight
 
 `plan` / `deploy` inspect **only bounded safetensors headers** using HTTP Range at the immutable commit, plus shard manifests. Missing shards/sizes, malformed shapes/offsets/dtypes, a server ignoring Range, or failed metadata access block deployment. No complete tensor file is downloaded by planning. Hub parameter counts are not used as proof: they can omit the image text encoder or a video expert.
@@ -194,4 +204,4 @@ Start with startup-time adapters rather than unauthenticated hot-swapping APIs:
 - Account for adapter memory and combined licenses; preserve the unmodified cached base.
 - Add CPU shape/metadata tests and real one-family-at-a-time GPU tests. No merging, dynamic public adapter loading, training, or arbitrary remote code by default.
 
-Publish a new version only after the intended scope is tested. The tracked `releases/current` now selects `v0.3.0-alpha.3`; the legacy Dokploy `RELEASE_VERSION` build argument is ignored with a warning. Release-site builds retain checksum-pinned prior assets and fail closed if the current public version already has different checksums. Bump the tracked version and extend `releases/retained.sha256` before the next release.
+Publish a new version only after the intended scope is tested. The tracked `releases/current` now selects `v0.3.0-alpha.4`; the legacy Dokploy `RELEASE_VERSION` build argument is ignored with a warning. Release-site builds retain checksum-pinned prior assets and fail closed if the current public version already has different checksums. Bump the tracked version and extend `releases/retained.sha256` before the next release.

@@ -281,7 +281,7 @@ func writePlan(w io.Writer, p Plan) {
 		fmt.Fprintf(w, "Model cache: %s\n", p.ModelCacheDir)
 	}
 	if p.Context > 0 {
-		fmt.Fprintf(w, "Context:     %d\n", p.Context)
+		fmt.Fprintf(w, "Context:     %d tokens\n", p.Context)
 	}
 	fmt.Fprintf(w, "Backend:     %s\n", p.Backend)
 	if p.Backend == "native" {
