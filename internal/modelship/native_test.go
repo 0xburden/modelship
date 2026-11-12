@@ -215,7 +215,7 @@ func TestNativeUninstallLeavesExternalCacheAlone(t *testing.T) {
 	if err = privateDir(dir); err != nil {
 		t.Fatal(err)
 	}
-	if err = writeJSONFile(filepath.Join(dir, "config.json"), NativeConfig{Schema: 1, Plan: p}); err != nil {
+	if err = writeJSONFile(filepath.Join(dir, "config.json"), NativeConfig{Schema: nativeSchemaVersion, Plan: p}); err != nil {
 		t.Fatal(err)
 	}
 	if err = ManageNative(context.Background(), "uninstall", p.Name); err != nil {
@@ -229,7 +229,7 @@ func TestNativeUninstallLeavesExternalCacheAlone(t *testing.T) {
 	}
 }
 
-func TestNativeSchema3ReadsLegacySchemasWithoutIgnoringFutureConstraints(t *testing.T) {
+func TestNativeSchema4ReadsLegacySchemasWithoutIgnoringFutureConstraints(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	p := Plan{Backend: "native", Name: "schema-check", Model: "org/model", Revision: strings.Repeat("a", 40), Port: 18031}
 	dir, err := nativeDir(p.Name)
@@ -239,7 +239,7 @@ func TestNativeSchema3ReadsLegacySchemasWithoutIgnoringFutureConstraints(t *test
 	if err = privateDir(dir); err != nil {
 		t.Fatal(err)
 	}
-	for _, schema := range []int{1, 2, 3} {
+	for _, schema := range []int{1, 2, 3, 4} {
 		if err = writeJSONFile(filepath.Join(dir, "config.json"), NativeConfig{Schema: schema, Plan: p}); err != nil {
 			t.Fatal(err)
 		}
@@ -247,7 +247,7 @@ func TestNativeSchema3ReadsLegacySchemasWithoutIgnoringFutureConstraints(t *test
 			t.Fatalf("legacy schema %d rejected: %v", schema, err)
 		}
 	}
-	if err = writeJSONFile(filepath.Join(dir, "config.json"), NativeConfig{Schema: 4, Plan: p}); err != nil {
+	if err = writeJSONFile(filepath.Join(dir, "config.json"), NativeConfig{Schema: nativeSchemaVersion + 1, Plan: p}); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err = nativeConfig(p.Name); err == nil {

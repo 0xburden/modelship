@@ -26,6 +26,8 @@ Commands:
   status|logs|stop|start --name NAME  Manage a deployment (add --backend native for native)
   uninstall --name NAME --yes        Remove deployment (keep model caches)
   smoke --name NAME                 Generate a short text completion
+  auth-keygen [--file PATH]          Create a private API key (never printed)
+  configure --backend native --name NAME --listen IP --api-key-file PATH
   version
 
 MODEL is org/repo or https://huggingface.co/org/repo.
@@ -34,6 +36,7 @@ Plan/deploy options:
   --task auto|text-generation|text-to-image|image-to-image|text-to-video
   --revision main   --gpu 0   --context 4096   --port 8000
   --backend docker|native   --python python3 (native base with working PyTorch)
+  --listen 127.0.0.1|0.0.0.0 --api-key-file PATH (native only; public binds require auth)
   --experimental     Explicitly opt in to an experimental implemented recipe
   --research         Acknowledge non-commercial research/evaluation use (Qwen Image)
   --trust-model-code Explicit approval of the pinned, hash-verified MOSS Python code
@@ -43,7 +46,7 @@ Plan/deploy options:
   --yes             Skip confirmation (deploy only)
   --wait 30m        Readiness timeout; 0 skips waiting (deploy only)
 
-Use HF_TOKEN for gated/private models. Native services bind directly to 127.0.0.1;
+Use HF_TOKEN for gated/private models (separate from API auth). Native defaults to 127.0.0.1;
 Docker publishes localhost ports subject to the provider's network isolation.
 No driver installation, automatic repository-code execution, unsafe checkpoint
 loading, arbitrary model conversion, or automatic public exposure. Safetensors
@@ -63,6 +66,10 @@ func Run(args []string, version string) error {
 			return fmt.Errorf("internal native-run requires name and run ID")
 		}
 		return NativeExec(args[1], args[2])
+	case "auth-keygen":
+		return authKeygenCommand(args[1:])
+	case "configure":
+		return configureNativeCommand(ctx, args[1:])
 	case "catalog":
 		return catalogCommand(args[1:])
 	case "inspect":
@@ -143,6 +150,8 @@ func planCommand(ctx context.Context, action string, args []string) error {
 	fs := flag.NewFlagSet(action, flag.ContinueOnError)
 	o := Options{}
 	fs.StringVar(&o.Backend, "backend", "docker", "docker or native")
+	fs.StringVar(&o.Listen, "listen", "", "native IPv4 listener (default 127.0.0.1); 0.0.0.0 requires --api-key-file")
+	fs.StringVar(&o.APIKeyFile, "api-key-file", "", "private bearer key file; never a literal key value")
 	fs.StringVar(&o.Python, "python", "python3", "native base Python with working CUDA PyTorch")
 	fs.StringVar(&o.Task, "task", "auto", "model task")
 	fs.StringVar(&o.Revision, "revision", "main", "Hugging Face revision")
@@ -183,6 +192,9 @@ func planCommand(ctx context.Context, action string, args []string) error {
 	}
 	if o.Backend != "docker" && o.Backend != "native" {
 		return fmt.Errorf("--backend must be docker or native")
+	}
+	if err := accessOptions(&o); err != nil {
+		return err
 	}
 	id, err := ParseModel(fs.Arg(0))
 	if err != nil {
@@ -265,6 +277,9 @@ func printPlan(p Plan) {
 		fmt.Printf("Context:     %d\n", p.Context)
 	}
 	fmt.Printf("Backend:     %s\n", p.Backend)
+	if p.Backend == "native" {
+		fmt.Printf("Listen:      %s; bearer authentication=%t\n", nativeListen(p), p.APIKeyFile != "")
+	}
 	if p.RecipeID != "" {
 		fmt.Printf("Recipe:      %s (%s), %s\n", p.RecipeID, p.RecipeStatus, p.DType)
 	}
