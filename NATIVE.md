@@ -5,7 +5,7 @@ Use this backend when host CUDA PyTorch works but Docker GPU passthrough does no
 ## Requirements
 
 - Linux amd64 with an NVIDIA GPU and working `nvidia-smi`.
-- Python 3.10+ with **already installed, functioning CUDA-enabled PyTorch** for established recipes; experimental recipes may require a newer Python (Gemma 4: >=3.11).
+- Python 3.10+ with **already installed, functioning CUDA-enabled PyTorch** for established recipes; experimental recipes require Python >=3.11; new Qwen/Image/MOSS/WAN profiles also check PyTorch >=2.9 without replacing it.
 - The selected Python's PyTorch must be available to a new `venv --system-site-packages`. A PyTorch installed only inside a parent virtual environment may not be inherited; use the working system Python in that case. The installer checks inheritance before invoking pip.
 - Python's `venv`/pip support (on Ubuntu, the matching `python3-venv` package may be required).
 - Network access for metadata, service dependencies, and any uncached weights.
@@ -44,6 +44,12 @@ modelship deploy stabilityai/stable-diffusion-xl-base-1.0 \
 
 Use the JSON/base64 image API examples in `README.md`. For image-to-image, create a separate deployment with `--task image-to-image` and a distinct name/port; stop competing deployments as appropriate. One task is served per deployment. The image runtime is shared with the Docker adapter; the native entrypoint binds directly to localhost.
 
+## Experimental image/video families
+
+[MODEL_SUPPORT.md](MODEL_SUPPORT.md) has exact pinned commands and contracts. Qwen Image needs separate `--research` acknowledgment, a dedicated same-pipeline editing contract (no `strength`), and enough **free** VRAM. MOSS additionally requires explicit `--trust-model-code` approval of one reviewed revision/three source hashes; this is not implied by research use. WAN requires explicit official converted safetensors selection, a much larger GPU/cache disk, and serves bounded asynchronous jobs, not the image endpoint. These adapters remain experimental and GPU validation is incomplete.
+
+All modern loaders place components directly on the selected CUDA device; no CPU offload/quantization is inferred. The planner counts all loaded components, including both WAN experts. `--allow-risk` never bypasses weights-alone fit, missing/invalid header metadata, disk limits or policy guards.
+
 ## Installation and PyTorch preservation
 
 After confirmation, the CLI:
@@ -53,8 +59,10 @@ After confirmation, the CLI:
 3. Creates a private per-deployment `--system-site-packages` virtual environment.
 4. Verifies that the new environment imports the **same PyTorch before pip runs**. If not, installation fails rather than trying to obtain another CUDA wheel.
 5. Installs pinned service dependencies with a constraint matching the existing torch package version. It never explicitly installs torch.
-6. Runs CUDA computation again and refuses startup if PyTorch's imported file/version changed. Recipe ID, loader, dtype, and dependency pins are retained in the plan. Recipe-enabled deployments use native state schema 2 (older CLIs reject it safely); the new CLI can still read established schema-1 deployments with backward-compatible defaults.
-7. Starts one detached worker, waits for health reporting the exact model revision and unique run identity, and prints its localhost endpoint.
+6. Runs CUDA computation again and refuses startup if PyTorch's imported file/version changed. Recipe ID, loader, component dtypes, dependency pins, research/code approval, reviewed source hashes and absolute cache path are retained. New native state uses **schema 3** (older CLIs reject it safely); this CLI still reads schema-1 and schema-2 deployments.
+7. Refreshes selected-GPU total/free VRAM against the saved weight minimum, then starts one detached worker, waits for health reporting the exact model revision and unique run identity, and prints its localhost endpoint.
+
+Workers set `USE_HUB_KERNELS=NO` to prevent implicit Transformers Hub-kernel downloads; standard loaders also reject model repository Python. MOSS is the sole explicit, reviewed-code exception.
 
 The host Python environment is not modified. Native dependencies are pinned at their direct versions; this is not a fully locked dependency graph. Shared host packages remain part of the trusted runtime. Native mode is **not a sandbox**: it runs as your user.
 
@@ -70,7 +78,7 @@ modelship uninstall --backend native --name images --yes
 
 - Workers detach into their own Linux session/process group and survive SSH disconnection.
 - **No automatic restart after a crash or reboot** in this version. Run `start` explicitly; a systemd adapter is future work.
-- `start` waits up to 30 minutes for readiness. Deploy supports `--wait 0` or another timeout.
+- `start` waits up to 30 minutes for readiness and refreshes the weight budget if present. Older saved plans lack this check. Deploy supports `--wait 0` or another timeout.
 - Readiness failure leaves logs/config/worker state for inspection; the process may still be downloading/loading. Do not blindly start a second copy.
 - `stop` verifies PID start ticks and unique command-line identity before signaling the process group, avoiding stale PID reuse. Graceful termination is attempted before a forced stop.
 - Failed installations retain state. Use `uninstall --backend native --name NAME --yes`, then redeploy after correcting the cause.
@@ -92,11 +100,14 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/modelship/native/NAME/
   native_entry.py      Localhost-only entrypoint
   server.py            Image API
   text_server.py       Text API
+  video_server.py      Bounded WAN jobs/MP4 API
+  model_code.py        Explicit reviewed-source loading gate
+  artifacts/           Private ephemeral video exports (video deployments)
 ```
 
 Directories are private (0700); metadata/assets/log files are 0600. `XDG_STATE_HOME` must be absolute. Lifecycle operations use a per-deployment lock.
 
-Weights use the usual Hugging Face host cache, respecting `HF_HOME` if supplied. Existing direct-test downloads can therefore be reused. **Uninstall removes deployment state/venv, not the shared model cache.** Native mode currently does not inspect cache filesystem free space; check it yourself before a large download.
+Weights use the usual Hugging Face host cache (`HF_HUB_CACHE`, legacy `HUGGINGFACE_HUB_CACHE`, then `HF_HOME` / `XDG_CACHE_HOME` defaults). The resolved absolute hub-cache path is saved for new deployments so restarts do not switch it silently. Planning inspects free disk and correctly-sized selected files at the pinned snapshot, without modifying them. Missing downloads plus 5% and 4 GiB headroom must fit; dependency/state files also need space on their own filesystem. **Uninstall removes deployment state/venv/video exports, not the shared model cache.** No cache eviction runs automatically.
 
 `HF_TOKEN` is inherited from the launching CLI, never written to config/arguments by Modelship. Supply it again on `start` if private/gated downloads need it; the CLI does not persist arbitrary environment variables across starts. Processes owned by the same user or root can inspect environments. Use a scoped read-only token and a trusted host.
 

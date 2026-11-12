@@ -4,33 +4,39 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"regexp"
 	"strings"
 )
 
 type Recipe struct {
-	ID                  string   `json:"id"`
-	Name                string   `json:"name"`
-	Kind                string   `json:"kind"`
-	Status              string   `json:"status"`
-	Repositories        []string `json:"repositories,omitempty"`
-	Architectures       []string `json:"architectures,omitempty"`
-	Pipelines           []string `json:"pipelines,omitempty"`
-	Backends            []string `json:"backends"`
-	Tasks               []string `json:"tasks"`
-	Runtime             string   `json:"runtime"`
-	NativeLoader        string   `json:"native_loader,omitempty"`
-	DType               string   `json:"dtype,omitempty"`
-	MinPython           string   `json:"min_python,omitempty"`
-	MinCompute          string   `json:"min_compute,omitempty"`
-	MemoryFloorMiB      int64    `json:"memory_floor_mib,omitempty"`
-	TextOnly            bool     `json:"text_only,omitempty"`
-	TemplateCompletions bool     `json:"template_completions,omitempty"`
-	DisableThinking     bool     `json:"disable_thinking,omitempty"`
-	RequiresCustomCode  bool     `json:"requires_custom_code,omitempty"`
-	NativeRequirements  []string `json:"native_requirements,omitempty"`
-	Blockers            []string `json:"blockers,omitempty"`
-	Notes               []string `json:"notes,omitempty"`
+	ID                  string            `json:"id"`
+	Name                string            `json:"name"`
+	Kind                string            `json:"kind"`
+	Status              string            `json:"status"`
+	Repositories        []string          `json:"repositories,omitempty"`
+	Architectures       []string          `json:"architectures,omitempty"`
+	Pipelines           []string          `json:"pipelines,omitempty"`
+	Backends            []string          `json:"backends"`
+	Tasks               []string          `json:"tasks"`
+	Runtime             string            `json:"runtime"`
+	NativeLoader        string            `json:"native_loader,omitempty"`
+	DType               string            `json:"dtype,omitempty"`
+	MinPython           string            `json:"min_python,omitempty"`
+	MinTorch            string            `json:"min_torch,omitempty"`
+	ComponentDTypes     map[string]string `json:"component_dtypes,omitempty"`
+	RequiresResearch    bool              `json:"requires_research,omitempty"`
+	CodeRevision        string            `json:"code_revision,omitempty"`
+	CodeHashes          map[string]string `json:"code_hashes,omitempty"`
+	MinCompute          string            `json:"min_compute,omitempty"`
+	MemoryFloorMiB      int64             `json:"memory_floor_mib,omitempty"`
+	TextOnly            bool              `json:"text_only,omitempty"`
+	TemplateCompletions bool              `json:"template_completions,omitempty"`
+	DisableThinking     bool              `json:"disable_thinking,omitempty"`
+	RequiresCustomCode  bool              `json:"requires_custom_code,omitempty"`
+	NativeRequirements  []string          `json:"native_requirements,omitempty"`
+	Blockers            []string          `json:"blockers,omitempty"`
+	Notes               []string          `json:"notes,omitempty"`
 }
 type RecipeCatalog struct {
 	Schema  int      `json:"schema"`
@@ -71,11 +77,27 @@ func LoadRecipes() (RecipeCatalog, error) {
 			return catalog, fmt.Errorf("recipe %s has no match/task/backend", r.ID)
 		}
 		if r.Status != "planned" {
-			if r.RequiresCustomCode || r.NativeLoader == "" || len(r.NativeRequirements) == 0 {
+			if r.NativeLoader == "" || len(r.NativeRequirements) == 0 {
 				return catalog, fmt.Errorf("executable recipe %s lacks safe native configuration", r.ID)
 			}
-			if !contains([]string{"causal-lm", "multimodal-lm", "auto-pipeline"}, r.NativeLoader) || !contains([]string{"float16", "bfloat16"}, r.DType) {
+			if !contains([]string{"causal-lm", "multimodal-lm", "auto-pipeline", "qwen-image21", "moss-image", "wan-pipeline"}, r.NativeLoader) || !contains([]string{"float16", "bfloat16"}, r.DType) {
 				return catalog, fmt.Errorf("invalid native loader/dtype in %s", r.ID)
+			}
+		}
+		for component, dtype := range r.ComponentDTypes {
+			if !repoPart.MatchString(component) || !contains([]string{"float16", "bfloat16", "float32"}, dtype) {
+				return catalog, fmt.Errorf("invalid component dtype in %s", r.ID)
+			}
+		}
+		if r.RequiresCustomCode && r.Status != "planned" {
+			if r.NativeLoader != "moss-image" || !commitPattern.MatchString(r.CodeRevision) || len(r.CodeHashes) != 3 || len(r.Repositories) != 1 || r.Repositories[0] != "OpenMOSS-Team/MOSS-Image-SFT" {
+				return catalog, fmt.Errorf("recipe %s lacks a reviewed code manifest", r.ID)
+			}
+			for _, path := range []string{"pipeline_moss_image.py", "scheduler/pipeline_moss_image.py", "transformer/pipeline_moss_image.py"} {
+				hash := r.CodeHashes[path]
+				if !fs.ValidPath(path) || len(hash) != 64 || strings.Trim(hash, "0123456789abcdef") != "" {
+					return catalog, fmt.Errorf("recipe %s has an invalid code hash", r.ID)
+				}
 			}
 		}
 		for _, pin := range r.NativeRequirements {
@@ -99,6 +121,11 @@ func findRecipe(m Model) (Recipe, bool, error) {
 		}
 	}
 	for _, r := range catalog.Recipes {
+		// These execution paths deliberately accept only the reviewed official
+		// repository, not arbitrary pipelines with the same class name.
+		if r.NativeLoader == "moss-image" || r.NativeLoader == "wan-pipeline" {
+			continue
+		}
 		if m.Index.Class != "" && contains(r.Pipelines, m.Index.Class) {
 			return r, true, nil
 		}

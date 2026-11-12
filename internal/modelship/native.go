@@ -28,9 +28,9 @@ type TorchInfo struct {
 	PythonVersion  string `json:"python_version,omitempty"`
 }
 
-// Schema 2 records recipe-specific execution. Older CLIs reject it rather
-// than silently starting a modern model with legacy loader/dtype defaults.
-const nativeSchemaVersion = 2
+// Schema 3 records research/code consent, component dtypes and cache paths.
+// Older CLIs must reject it instead of ignoring these execution constraints.
+const nativeSchemaVersion = 3
 
 type NativeConfig struct {
 	Schema int       `json:"schema"`
@@ -117,7 +117,7 @@ func nativeConfig(name string) (NativeConfig, string, error) {
 	if err = readJSONFile(filepath.Join(dir, "config.json"), &cfg); err != nil {
 		return cfg, dir, fmt.Errorf("read native deployment %s: %w", name, err)
 	}
-	if (cfg.Schema != 1 && cfg.Schema != nativeSchemaVersion) || cfg.Plan.Backend != "native" || cfg.Plan.Name != name || !commitPattern.MatchString(cfg.Plan.Revision) || cfg.Plan.Port < 1024 || cfg.Plan.Port > 65535 {
+	if (cfg.Schema != 1 && cfg.Schema != 2 && cfg.Schema != nativeSchemaVersion) || cfg.Plan.Backend != "native" || cfg.Plan.Name != name || !commitPattern.MatchString(cfg.Plan.Revision) || cfg.Plan.Port < 1024 || cfg.Plan.Port > 65535 {
 		return cfg, dir, fmt.Errorf("invalid native deployment metadata")
 	}
 	return cfg, dir, nil
@@ -141,13 +141,32 @@ func nativeEnv(p Plan, runID string) []string {
 	if loader == "" {
 		loader = "causal-lm"
 	}
+	encoded := func(value any, empty string) string {
+		data, _ := json.Marshal(value)
+		if string(data) == "null" {
+			return empty
+		}
+		return string(data)
+	}
+	artifactDir := ""
+	if dir, err := nativeDir(p.Name); err == nil {
+		artifactDir = filepath.Join(dir, "artifacts")
+	}
 	overrides := map[string]string{
-		"MODEL_DTYPE": dtype, "MODEL_NATIVE_LOADER": loader, "MODEL_RECIPE": p.RecipeID,
+		"MODEL_COMPONENT_DTYPES": encoded(p.ComponentDTypes, "{}"),
+		"MODEL_RESEARCH":         strconv.FormatBool(p.Research), "MODEL_TRUST_CODE": strconv.FormatBool(p.TrustModelCode),
+		"MODEL_CODE_REVISION": p.CodeRevision, "MODEL_CODE_HASHES": encoded(p.CodeHashes, "{}"),
+		"MODEL_WEIGHT_FILES": encoded(p.Files, "[]"), "MODEL_ARTIFACT_DIR": artifactDir,
+		"MODEL_REQUESTED_ID": p.RequestedModel,
+		"MODEL_DTYPE":        dtype, "MODEL_NATIVE_LOADER": loader, "MODEL_RECIPE": p.RecipeID,
 		"MODEL_TEMPLATE_COMPLETIONS": strconv.FormatBool(p.TemplateCompletions), "MODEL_DISABLE_THINKING": strconv.FormatBool(p.DisableThinking),
 		"CUDA_VISIBLE_DEVICES": p.GPU.UUID, "MODEL_ID": p.Model, "MODEL_REVISION": p.Revision,
 		"MODEL_TASK": p.Task, "MODEL_PIPELINE": p.Pipeline, "MODEL_CONTEXT": strconv.Itoa(p.Context),
 		"MODEL_PORT": strconv.Itoa(p.Port), "MODEL_RUN_ID": runID, "PYTHONUNBUFFERED": "1",
-		"HF_HUB_DISABLE_TELEMETRY": "1",
+		"HF_HUB_DISABLE_TELEMETRY": "1", "USE_HUB_KERNELS": "NO",
+	}
+	if p.ModelCacheDir != "" {
+		overrides["HF_HUB_CACHE"] = p.ModelCacheDir
 	}
 	var env []string
 	for _, item := range os.Environ() {
@@ -187,6 +206,9 @@ func probeTorch(ctx context.Context, python string, p Plan) (TorchInfo, error) {
 func DeployNative(ctx context.Context, p Plan, wait time.Duration) error {
 	if len(p.Blockers) > 0 {
 		return fmt.Errorf("deployment blocked: %s", strings.Join(p.Blockers, "; "))
+	}
+	if err := verifyWeightFitNow(ctx, p); err != nil {
+		return err
 	}
 	python, err := exec.LookPath(p.Python)
 	if err != nil {
@@ -228,12 +250,18 @@ func DeployNative(ctx context.Context, p Plan, wait time.Duration) error {
 			return fmt.Errorf("recipe %s requires Python >= %s; selected Python reports %q", p.RecipeID, p.MinPython, before.PythonVersion)
 		}
 	}
+	if p.MinTorch != "" {
+		var major, minor int
+		if _, err := fmt.Sscanf(p.MinTorch, "%d.%d", &major, &minor); err != nil || !driverAtLeast(before.Version, major, minor) {
+			return fmt.Errorf("recipe %s requires PyTorch >= %s; selected Python reports %q (Modelship will not replace host PyTorch)", p.RecipeID, p.MinTorch, before.Version)
+		}
+	}
 	fmt.Printf("Native PyTorch: %s · CUDA %s · %s\n", before.Version, before.CUDA, before.GPU)
 	cfg.Torch = before
 	if err = writeJSONFile(filepath.Join(dir, "config.json"), cfg); err != nil {
 		return err
 	}
-	for _, name := range []string{"native_entry.py", "server.py", "text_server.py"} {
+	for _, name := range []string{"native_entry.py", "server.py", "text_server.py", "model_code.py", "video_server.py"} {
 		b, e := assets.ReadFile("assets/" + name)
 		if e != nil {
 			return e
@@ -291,6 +319,9 @@ func startNative(ctx context.Context, cfg NativeConfig, dir string, wait time.Du
 	old, err := loadNativeRun(dir)
 	if err == nil && nativeAlive(dir, old) {
 		return fmt.Errorf("native deployment already running (PID %d)", old.PID)
+	}
+	if err := verifyWeightFitNow(ctx, cfg.Plan); err != nil {
+		return err
 	}
 	listener, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", cfg.Plan.Port))
 	if err != nil {

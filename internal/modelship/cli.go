@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -30,10 +31,13 @@ Commands:
 MODEL is org/repo or https://huggingface.co/org/repo.
 
 Plan/deploy options:
-  --task auto|text-generation|text-to-image|image-to-image
+  --task auto|text-generation|text-to-image|image-to-image|text-to-video
   --revision main   --gpu 0   --context 4096   --port 8000
   --backend docker|native   --python python3 (native base with working PyTorch)
   --experimental     Explicitly opt in to an experimental implemented recipe
+  --research         Acknowledge non-commercial research/evaluation use (Qwen Image)
+  --trust-model-code Explicit approval of the pinned, hash-verified MOSS Python code
+  --weights-repo ID  Explicit official WAN Diffusers conversion; never inferred
   --name modelship  --allow-risk   --gpu-mode auto|nvidia|cdi (Docker)
   --json            Print machine-readable plan (plan only)
   --yes             Skip confirmation (deploy only)
@@ -41,8 +45,9 @@ Plan/deploy options:
 
 Use HF_TOKEN for gated/private models. Native services bind directly to 127.0.0.1;
 Docker publishes localhost ports subject to the provider's network isolation.
-No driver installation, remote model code, arbitrary model conversion, or
-automatic public exposure. Plans are estimates, not compatibility guarantees.
+No driver installation, automatic repository-code execution, unsafe checkpoint
+loading, arbitrary model conversion, or automatic public exposure. Safetensors
+headers check weights-alone VRAM; activation/cache estimates are still heuristics.
 `
 
 func Run(args []string, version string) error {
@@ -148,6 +153,9 @@ func planCommand(ctx context.Context, action string, args []string) error {
 	fs.StringVar(&o.Name, "name", "modelship", "container name")
 	fs.BoolVar(&o.AllowRisk, "allow-risk", false, "override VRAM heuristic only")
 	fs.BoolVar(&o.Experimental, "experimental", false, "opt in to experimental implemented recipes")
+	fs.BoolVar(&o.Research, "research", false, "acknowledge non-commercial research/evaluation use under the model license")
+	fs.BoolVar(&o.TrustModelCode, "trust-model-code", false, "approve reviewed, revision-pinned and SHA-256-verified MOSS repository Python")
+	weightsRepo := fs.String("weights-repo", "", "explicit supported weights repository; --revision applies to this selected repository")
 	asJSON := fs.Bool("json", false, "machine-readable plan")
 	yes := fs.Bool("yes", false, "skip confirmation")
 	wait := fs.Duration("wait", 30*time.Minute, "readiness timeout")
@@ -170,13 +178,18 @@ func planCommand(ctx context.Context, action string, args []string) error {
 	if o.GPUMode != "auto" && o.GPUMode != "nvidia" && o.GPUMode != "cdi" {
 		return fmt.Errorf("--gpu-mode must be auto, nvidia, or cdi")
 	}
-	if o.Task != "auto" && o.Task != "text-generation" && o.Task != "text-to-image" && o.Task != "image-to-image" {
+	if o.Task != "auto" && o.Task != "text-generation" && o.Task != "text-to-image" && o.Task != "image-to-image" && o.Task != "text-to-video" {
 		return fmt.Errorf("invalid --task")
 	}
 	if o.Backend != "docker" && o.Backend != "native" {
 		return fmt.Errorf("--backend must be docker or native")
 	}
 	id, err := ParseModel(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	requestedID := id
+	id, err = resolveWeightRepo(requestedID, *weightsRepo)
 	if err != nil {
 		return err
 	}
@@ -192,9 +205,18 @@ func planCommand(ctx context.Context, action string, args []string) error {
 	if err != nil {
 		return err
 	}
+	// Errors are recorded on Model and become non-overridable plan blockers,
+	// including in JSON output; never silently replace failed metadata with a guess.
+	_ = hub.InspectWeightMetadata(ctx, &model)
+	if o.Backend == "native" {
+		InspectModelCache(&host, model)
+	}
 	p, err := BuildPlan(model, host, o)
 	if err != nil {
 		return err
+	}
+	if requestedID != id {
+		p.RequestedModel = requestedID
 	}
 	if *asJSON {
 		if err = printJSON(p); err != nil {
@@ -230,14 +252,35 @@ func printJSON(v any) error {
 	return enc.Encode(v)
 }
 func printPlan(p Plan) {
+	if p.RequestedModel != "" {
+		fmt.Printf("Requested:   %s\nExplicit weights repository follows:\n", p.RequestedModel)
+	}
 	fmt.Printf("Model:       %s\nRevision:    %s\nTask:        %s\nRuntime:     %s (%s)\nGPU:         %d · %s · %d MiB free\nWeights:     %d files · %.2f GiB (plus supporting files)\nEst. VRAM:   %d MiB\nEndpoint:    http://127.0.0.1:%d\nContainer:   %s\n",
 		p.Model, p.Revision, p.Task, p.Runtime, p.Image, p.GPU.Index, p.GPU.Name, p.GPU.FreeMiB, len(p.Files), float64(p.WeightBytes)/(1024*1024*1024), p.EstimatedVRAMMiB, p.Port, p.Name)
+	fmt.Printf("Weight VRAM: %.2f GiB (%s); fits total=%t, fits free=%t\n", float64(p.WeightResidentBytes)/(1024*1024*1024), p.WeightMemoryBasis, p.WeightsFitTotal, p.WeightsFitFree)
+	if p.ModelCacheDir != "" {
+		fmt.Printf("Model cache: %s\n", p.ModelCacheDir)
+	}
 	if p.Context > 0 {
 		fmt.Printf("Context:     %d\n", p.Context)
 	}
 	fmt.Printf("Backend:     %s\n", p.Backend)
 	if p.RecipeID != "" {
 		fmt.Printf("Recipe:      %s (%s), %s\n", p.RecipeID, p.RecipeStatus, p.DType)
+	}
+	if p.Research {
+		fmt.Println("Use:         non-commercial research/evaluation acknowledged; review exact model terms")
+	}
+	if p.CodeRevision != "" {
+		fmt.Printf("Code review: %s; execution approved=%t (runs as your user, no sandbox)\n", p.CodeRevision, p.TrustModelCode)
+		names := make([]string, 0, len(p.CodeHashes))
+		for name := range p.CodeHashes {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			fmt.Printf("  SHA-256 %s  %s\n", p.CodeHashes[name], name)
+		}
 	}
 	if p.Python != "" {
 		fmt.Printf("Base Python: %s\n", p.Python)

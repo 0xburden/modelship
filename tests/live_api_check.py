@@ -81,10 +81,14 @@ def main():
         else:
             encoded = None
             sizes = (512, 1024)
+        pipeline = health.get("pipeline", "")
+        guidance = 1.0 if pipeline == "QwenImage21Pipeline" else 3.0 if pipeline == "MOSSImagePipeline" else 7.0
         for size in sizes:
-            body = {"prompt": "A small mountain observatory at sunset, watercolor painting" if encoded is None else "A small mountain observatory at night beneath a starry sky, watercolor painting", "width": size, "height": size, "steps": 20, "guidance_scale": 7.0, "seed": 42 if encoded is None else 43}
+            body = {"prompt": "A small mountain observatory at sunset, watercolor painting" if encoded is None else "A small mountain observatory at night beneath a starry sky, watercolor painting", "width": size, "height": size, "steps": 20, "guidance_scale": guidance, "seed": 42 if encoded is None else 43}
             if encoded is not None:
-                body.update(image_b64=encoded, strength=0.65)
+                body.update(image_b64=encoded)
+                if pipeline != "QwenImage21Pipeline":
+                    body["strength"] = 0.65
             result = check(f"{args.task}-{size}", endpoint, body)
             data = base64.b64decode(result["data"][0]["b64_json"], validate=True)
             assert data.startswith(b"\x89PNG\r\n\x1a\n")

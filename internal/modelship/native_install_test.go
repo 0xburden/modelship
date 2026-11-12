@@ -2,8 +2,10 @@ package modelship
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -19,6 +21,7 @@ func TestMain(m *testing.M) {
 // model downloads, or host Python modifications are performed by these tests.
 func fakeNativePython(t *testing.T, mode string) (string, string) {
 	t.Helper()
+	fakeNvidiaSMI(t, "0, GPU-test, RTX 4090, 24576, 24000, 575.57.08, 8.9")
 	dir := t.TempDir()
 	python := filepath.Join(dir, "python")
 	mark := filepath.Join(dir, "pip-ran")
@@ -56,6 +59,7 @@ func installPlan(t *testing.T, python string) Plan {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	o := optsFixture()
 	o.Backend = "native"
+	o.Port = unusedLoopbackPort(t)
 	o.Python = python
 	p, err := BuildPlan(textFixture(), hostFixture(), o)
 	if err != nil {
@@ -64,6 +68,9 @@ func installPlan(t *testing.T, python string) Plan {
 	return p
 }
 func TestNativeInstallConstrainsAndPreservesTorch(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("native launch identity requires Linux /proc; exercised in Linux CI")
+	}
 	python, mark := fakeNativePython(t, "normal")
 	p := installPlan(t, python)
 	if err := DeployNative(context.Background(), p, 0); err != nil {
@@ -91,7 +98,7 @@ func TestNativeInstallConstrainsAndPreservesTorch(t *testing.T) {
 	if strings.Contains(string(b), "torch==") {
 		t.Fatal("explicit torch installation requested")
 	}
-	for _, name := range []string{"native_entry.py", "server.py", "text_server.py"} {
+	for _, name := range []string{"native_entry.py", "server.py", "text_server.py", "model_code.py", "video_server.py"} {
 		st, err := os.Stat(filepath.Join(dir, name))
 		if err != nil || st.Mode().Perm() != 0600 {
 			t.Fatal(name, err)
@@ -99,10 +106,14 @@ func TestNativeInstallConstrainsAndPreservesTorch(t *testing.T) {
 	}
 }
 func TestExperimentalProfileUsesOwnPinsWithoutChangingTorch(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("native launch identity requires Linux /proc; exercised in Linux CI")
+	}
 	python, _ := fakeNativePython(t, "normal")
 	_ = installPlan(t, python) // Isolate native state.
 	o := optsFixture()
 	o.Backend = "native"
+	o.Port = unusedLoopbackPort(t)
 	o.Python = python
 	o.Experimental = true
 	p, err := BuildPlan(targetFixture(t, "google/gemma-4-E4B-it"), hostFixture(), o)
@@ -130,6 +141,7 @@ func TestExperimentalProfileChecksPythonBeforePip(t *testing.T) {
 	_ = installPlan(t, python)
 	o := optsFixture()
 	o.Backend = "native"
+	o.Port = unusedLoopbackPort(t)
 	o.Python = python
 	o.Experimental = true
 	p, err := BuildPlan(targetFixture(t, "google/gemma-4-E4B-it"), hostFixture(), o)
@@ -176,4 +188,30 @@ func TestNativeInstallDoesNotAskPipForMissingInheritedTorch(t *testing.T) {
 	if _, err = os.Stat(mark); !os.IsNotExist(err) {
 		t.Fatal("ran pip despite missing inherited PyTorch")
 	}
+}
+
+func TestRecipeTorchMinimumFailsBeforePipWithoutReplacingHost(t *testing.T) {
+	python, mark := fakeNativePython(t, "normal")
+	p := installPlan(t, python)
+	p.MinTorch = "99.0"
+	err := DeployNative(context.Background(), p, 0)
+	if err == nil || !strings.Contains(err.Error(), "PyTorch >= 99.0") || !strings.Contains(err.Error(), "will not replace") {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(mark); !os.IsNotExist(err) {
+		t.Fatal("pip ran despite incompatible host Torch")
+	}
+}
+
+func unusedLoopbackPort(t *testing.T) int {
+	t.Helper()
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return port
 }

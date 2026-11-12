@@ -15,6 +15,7 @@ import (
 
 func fakeDocker(t *testing.T, script string) string {
 	t.Helper()
+	fakeNvidiaSMI(t, "0, GPU-test, RTX 4090, 24576, 24000, 575.57.08, 8.9")
 	dir := t.TempDir()
 	log := filepath.Join(dir, "calls")
 	t.Setenv("DOCKER_LOG", log)

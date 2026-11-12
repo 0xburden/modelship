@@ -34,7 +34,7 @@ func TestRecipeRegistryLoadsAndPinsDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog.Recipes) != 9 {
+	if len(catalog.Recipes) != 10 {
 		t.Fatal(len(catalog.Recipes))
 	}
 	for _, r := range catalog.Recipes {
@@ -43,8 +43,8 @@ func TestRecipeRegistryLoadsAndPinsDependencies(t *testing.T) {
 				t.Fatal(r.ID, pin)
 			}
 		}
-		if r.RequiresCustomCode && r.Status != "planned" {
-			t.Fatal("custom code enabled without an explicit execution design")
+		if r.RequiresCustomCode && r.Status != "planned" && (r.CodeRevision == "" || len(r.CodeHashes) != 3 || r.NativeLoader != "moss-image") {
+			t.Fatal("custom code recipe lacks reviewed immutable manifest")
 		}
 	}
 }
@@ -53,11 +53,12 @@ func TestRequestedModelsAreRecognizedWithoutBeingSilentlyEnabled(t *testing.T) {
 		id, recipe, status string
 		bytes              int64
 	}{
-		{"Qwen/Qwen3.8-27B", "qwen3.8-multimodal", "planned", 55563006776},
-		{"Qwen/Qwen-Image-2.1", "qwen-image21", "planned", 33115613408},
+		{"Qwen/Qwen3.8-27B", "qwen3.8-multimodal", "experimental", 55563006776},
+		{"Qwen/Qwen-Image-2.1", "qwen-image21", "experimental", 33115613408},
 		{"google/gemma-4-E4B-it", "gemma4-text", "experimental", 15992595884},
-		{"OpenMOSS-Team/MOSS-Image-SFT", "moss-image", "planned", 27199664580},
+		{"OpenMOSS-Team/MOSS-Image-SFT", "moss-image", "experimental", 27199664580},
 		{"Wan-AI/Wan2.2-T2V-A14B", "wan22-t2v-native", "planned", 126177685050},
+		{"Wan-AI/Wan2.2-T2V-A14B-Diffusers", "wan22-t2v-diffusers", "experimental", 126177598620},
 	}
 	for _, tc := range cases {
 		t.Run(tc.id, func(t *testing.T) {
@@ -183,6 +184,55 @@ func TestLegacySavedNativePlanStillHasDependencyFallback(t *testing.T) {
 		}
 		if !contains(requirements, "transformers==4.56.2") {
 			t.Fatal(requirements)
+		}
+	}
+}
+
+func TestResearchAndCustomCodeRequireSeparateAcknowledgments(t *testing.T) {
+	h := hostFixture()
+	h.GPUs[0].TotalMiB = 163840
+	h.GPUs[0].FreeMiB = 160000
+	o := optsFixture()
+	o.Backend = "native"
+	o.Experimental = true
+	image := targetFixture(t, "Qwen/Qwen-Image-2.1")
+	p, err := BuildPlan(image, h, o)
+	if err != nil || !strings.Contains(strings.Join(p.Blockers, ";"), "--research") {
+		t.Fatalf("%+v %v", p, err)
+	}
+	o.Research = true
+	p, err = BuildPlan(image, h, o)
+	if err != nil || len(p.Blockers) > 0 || !p.Research || p.ComponentDTypes["vae"] != "float32" {
+		t.Fatalf("%+v %v", p, err)
+	}
+	moss := targetFixture(t, "OpenMOSS-Team/MOSS-Image-SFT")
+	p, err = BuildPlan(moss, h, o)
+	if err != nil || !strings.Contains(strings.Join(p.Blockers, ";"), "--trust-model-code") {
+		t.Fatalf("research implicitly trusted code: %+v %v", p, err)
+	}
+	o.TrustModelCode = true
+	p, err = BuildPlan(moss, h, o)
+	if err != nil || len(p.Blockers) > 0 || !p.TrustModelCode || p.CodeRevision != moss.Hub.SHA || len(p.CodeHashes) != 3 {
+		t.Fatalf("%+v %v", p, err)
+	}
+	moss.Hub.SHA = strings.Repeat("a", 40)
+	p, err = BuildPlan(moss, h, o)
+	if err != nil || !strings.Contains(strings.Join(p.Blockers, ";"), "reviewed immutable revision") {
+		t.Fatalf("unreviewed code revision accepted: %+v %v", p, err)
+	}
+}
+func TestWANConvertedRepositoryIsOnlyExplicitlySelected(t *testing.T) {
+	original := "Wan-AI/Wan2.2-T2V-A14B"
+	converted := original + "-Diffusers"
+	if actual, err := resolveWeightRepo(original, ""); err != nil || actual != original {
+		t.Fatal("implicit substitution", actual, err)
+	}
+	if actual, err := resolveWeightRepo(original, converted); err != nil || actual != converted {
+		t.Fatal(actual, err)
+	}
+	for _, pair := range [][2]string{{original, "other/model"}, {"Qwen/Qwen3.8-27B", converted}} {
+		if _, err := resolveWeightRepo(pair[0], pair[1]); err == nil {
+			t.Fatal("arbitrary model substitution permitted")
 		}
 	}
 }

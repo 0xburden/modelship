@@ -63,7 +63,7 @@ async def lifespan(app):
     if loader_name == "multimodal-lm":
         from transformers import AutoModelForMultimodalLM
         loader = AutoModelForMultimodalLM
-        dtype_options = {"dtype": dtype}
+        dtype_options = {"dtype": dtype, "device_map": "cuda", "low_cpu_mem_usage": True}
     elif loader_name == "causal-lm":
         loader = AutoModelForCausalLM
         dtype_options = {"torch_dtype": dtype}
@@ -73,7 +73,10 @@ async def lifespan(app):
         MODEL, revision=REVISION, **dtype_options,
         use_safetensors=True, trust_remote_code=False,
         attn_implementation="eager",
-    ).to("cuda").eval()
+    )
+    if loader_name == "causal-lm":
+        NETWORK = NETWORK.to("cuda")
+    NETWORK = NETWORK.eval()
     yield
     NETWORK = None
     TOKENIZER = None

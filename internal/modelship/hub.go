@@ -65,11 +65,14 @@ type ModelIndex struct {
 	Class string `json:"_class_name"`
 }
 type Model struct {
-	Hub                HubModel
-	Config             ModelConfig
-	Index              ModelIndex
-	SourceConfig       string
-	InspectionWarnings []string
+	Hub                   HubModel
+	Config                ModelConfig
+	Index                 ModelIndex
+	SourceConfig          string
+	InspectionWarnings    []string
+	WeightMetadataChecked bool
+	WeightMetadataError   string
+	WeightMetadata        []WeightFileMetadata
 }
 type Hub struct {
 	BaseURL string

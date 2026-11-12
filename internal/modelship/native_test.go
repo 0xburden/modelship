@@ -47,6 +47,7 @@ func TestNativePlanDoesNotRequireDockerOrPinnedDriver(t *testing.T) {
 }
 func TestNativeEnvReplacesRatherThanDuplicates(t *testing.T) {
 	t.Setenv("CUDA_VISIBLE_DEVICES", "all")
+	t.Setenv("USE_HUB_KERNELS", "YES")
 	t.Setenv("MODEL_PORT", "9999")
 	t.Setenv("HF_TOKEN", "private-token")
 	o := optsFixture()
@@ -59,6 +60,9 @@ func TestNativeEnvReplacesRatherThanDuplicates(t *testing.T) {
 	joined := strings.Join(env, "\n")
 	if strings.Count(joined, "CUDA_VISIBLE_DEVICES=") != 1 || !strings.Contains(joined, "CUDA_VISIBLE_DEVICES=GPU-test") || strings.Contains(joined, "MODEL_PORT=9999") {
 		t.Fatal("duplicate/incorrect environment")
+	}
+	if !strings.Contains(joined, "USE_HUB_KERNELS=NO") || strings.Contains(joined, "USE_HUB_KERNELS=YES") {
+		t.Fatal("unreviewed remote kernel fetching left enabled")
 	}
 	if !strings.Contains(joined, "HF_TOKEN=private-token") {
 		t.Fatal("token not forwarded")
@@ -222,5 +226,31 @@ func TestNativeUninstallLeavesExternalCacheAlone(t *testing.T) {
 	}
 	if _, err = os.Stat(sentinel); err != nil {
 		t.Fatal("external cache removed", err)
+	}
+}
+
+func TestNativeSchema3ReadsLegacySchemasWithoutIgnoringFutureConstraints(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	p := Plan{Backend: "native", Name: "schema-check", Model: "org/model", Revision: strings.Repeat("a", 40), Port: 18031}
+	dir, err := nativeDir(p.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = privateDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, schema := range []int{1, 2, 3} {
+		if err = writeJSONFile(filepath.Join(dir, "config.json"), NativeConfig{Schema: schema, Plan: p}); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err = nativeConfig(p.Name); err != nil {
+			t.Fatalf("legacy schema %d rejected: %v", schema, err)
+		}
+	}
+	if err = writeJSONFile(filepath.Join(dir, "config.json"), NativeConfig{Schema: 4, Plan: p}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = nativeConfig(p.Name); err == nil {
+		t.Fatal("unknown future schema accepted")
 	}
 }

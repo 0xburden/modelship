@@ -89,13 +89,13 @@ func TestMemoryOverrideCannotOverrideDriver(t *testing.T) {
 	h.GPUs[0].FreeMiB = 1000
 	h.GPUs[0].Driver = "550.54.15"
 	p, err := BuildPlan(textFixture(), h, optsFixture())
-	if err != nil || len(p.Blockers) != 2 {
+	if err != nil || len(p.Blockers) != 3 {
 		t.Fatalf("%+v %v", p, err)
 	}
 	o := optsFixture()
 	o.AllowRisk = true
 	p, err = BuildPlan(textFixture(), h, o)
-	if err != nil || len(p.Blockers) != 1 || !strings.Contains(p.Blockers[0], "driver") {
+	if err != nil || len(p.Blockers) != 2 || !strings.Contains(p.Blockers[0], "driver") || !strings.Contains(p.Blockers[1], "currently free") {
 		t.Fatalf("%+v %v", p, err)
 	}
 }

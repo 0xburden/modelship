@@ -11,49 +11,63 @@ const VLLMImage = "vllm/vllm-openai:v0.10.2"
 const ImageRuntime = "modelship-diffusers:0.1.0"
 
 type Options struct {
-	Backend      string
-	Python       string
-	Task         string
-	GPU          int
-	GPUMode      string
-	Context      int
-	Port         int
-	Name         string
-	Revision     string
-	AllowRisk    bool
-	Experimental bool
+	Backend        string
+	Python         string
+	Task           string
+	GPU            int
+	GPUMode        string
+	Context        int
+	Port           int
+	Name           string
+	Revision       string
+	AllowRisk      bool
+	Experimental   bool
+	Research       bool
+	TrustModelCode bool
 }
 type Plan struct {
-	Schema              int      `json:"schema"`
-	Backend             string   `json:"backend"`
-	RecipeID            string   `json:"recipe_id,omitempty"`
-	RecipeStatus        string   `json:"recipe_status,omitempty"`
-	DType               string   `json:"dtype,omitempty"`
-	NativeLoader        string   `json:"native_loader,omitempty"`
-	MinPython           string   `json:"min_python,omitempty"`
-	NativeRequirements  []string `json:"native_requirements,omitempty"`
-	TemplateCompletions bool     `json:"template_completions,omitempty"`
-	DisableThinking     bool     `json:"disable_thinking,omitempty"`
-	Python              string   `json:"python,omitempty"`
-	Model               string   `json:"model"`
-	Revision            string   `json:"revision"`
-	License             any      `json:"license,omitempty"`
-	Task                string   `json:"task"`
-	Runtime             string   `json:"runtime"`
-	Image               string   `json:"image"`
-	Pipeline            string   `json:"pipeline,omitempty"`
-	GPU                 GPU      `json:"gpu"`
-	GPUMode             string   `json:"gpu_mode"`
-	GPUCount            int      `json:"host_gpu_count"`
-	Context             int      `json:"context,omitempty"`
-	Port                int      `json:"port"`
-	Name                string   `json:"name"`
-	Files               []string `json:"weight_files"`
-	WeightBytes         int64    `json:"weight_download_bytes"`
-	EstimatedVRAMMiB    int64    `json:"estimated_vram_mib"`
-	GPUMemoryFraction   float64  `json:"gpu_memory_fraction,omitempty"`
-	Warnings            []string `json:"warnings"`
-	Blockers            []string `json:"blockers,omitempty"`
+	Schema              int               `json:"schema"`
+	Backend             string            `json:"backend"`
+	RecipeID            string            `json:"recipe_id,omitempty"`
+	RecipeStatus        string            `json:"recipe_status,omitempty"`
+	DType               string            `json:"dtype,omitempty"`
+	NativeLoader        string            `json:"native_loader,omitempty"`
+	MinPython           string            `json:"min_python,omitempty"`
+	MinTorch            string            `json:"min_torch,omitempty"`
+	ComponentDTypes     map[string]string `json:"component_dtypes,omitempty"`
+	Research            bool              `json:"research,omitempty"`
+	TrustModelCode      bool              `json:"trust_model_code,omitempty"`
+	CodeRevision        string            `json:"code_revision,omitempty"`
+	CodeHashes          map[string]string `json:"code_hashes,omitempty"`
+	RequestedModel      string            `json:"requested_model,omitempty"`
+	NativeRequirements  []string          `json:"native_requirements,omitempty"`
+	TemplateCompletions bool              `json:"template_completions,omitempty"`
+	DisableThinking     bool              `json:"disable_thinking,omitempty"`
+	Python              string            `json:"python,omitempty"`
+	Model               string            `json:"model"`
+	Revision            string            `json:"revision"`
+	License             any               `json:"license,omitempty"`
+	Task                string            `json:"task"`
+	Runtime             string            `json:"runtime"`
+	Image               string            `json:"image"`
+	Pipeline            string            `json:"pipeline,omitempty"`
+	GPU                 GPU               `json:"gpu"`
+	GPUMode             string            `json:"gpu_mode"`
+	GPUCount            int               `json:"host_gpu_count"`
+	Context             int               `json:"context,omitempty"`
+	Port                int               `json:"port"`
+	Name                string            `json:"name"`
+	Files               []string          `json:"weight_files"`
+	WeightBytes         int64             `json:"weight_download_bytes"`
+	ModelCacheDir       string            `json:"model_cache_dir,omitempty"`
+	WeightResidentBytes int64             `json:"weight_resident_bytes"`
+	WeightMemoryBasis   string            `json:"weight_memory_basis"`
+	WeightsFitTotal     bool              `json:"weights_fit_total"`
+	WeightsFitFree      bool              `json:"weights_fit_free"`
+	EstimatedVRAMMiB    int64             `json:"estimated_vram_mib"`
+	GPUMemoryFraction   float64           `json:"gpu_memory_fraction,omitempty"`
+	Warnings            []string          `json:"warnings"`
+	Blockers            []string          `json:"blockers,omitempty"`
 }
 
 func BuildPlan(m Model, h Host, o Options) (Plan, error) {
@@ -105,12 +119,23 @@ func BuildPlan(m Model, h Host, o Options) (Plan, error) {
 	p.DType = recipe.DType
 	p.NativeLoader = recipe.NativeLoader
 	p.MinPython = recipe.MinPython
+	p.MinTorch = recipe.MinTorch
+	if len(recipe.ComponentDTypes) > 0 {
+		p.ComponentDTypes = make(map[string]string, len(recipe.ComponentDTypes))
+		for component, dtype := range recipe.ComponentDTypes {
+			p.ComponentDTypes[component] = dtype
+		}
+	}
 	p.NativeRequirements = append([]string{}, recipe.NativeRequirements...)
 	p.TemplateCompletions = recipe.TemplateCompletions
 	p.DisableThinking = recipe.DisableThinking
 	p.Warnings = append(p.Warnings, recipe.Notes...)
 	if recipe.Status == "experimental" && !o.Experimental {
 		p.Blockers = append(p.Blockers, "experimental recipe requires explicit --experimental opt-in")
+	}
+	applyRecipePolicy(&p, recipe, m, o)
+	if backend == "native" {
+		p.ModelCacheDir = h.ModelCacheDir
 	}
 	if o.Context < 128 || o.Context > 131072 {
 		return p, fmt.Errorf("--context must be between 128 and 131072")
@@ -158,14 +183,31 @@ func BuildPlan(m Model, h Host, o Options) (Plan, error) {
 		"Memory estimates are heuristics, not fit or throughput guarantees; downloads also require tokenizer/config files and runtime dependency disk space.",
 		"Review the model license and accept any gated access terms before deployment.",
 		"Only one GPU is used; multi-GPU sharding and automatic quantization are not implemented.")
-	if recipe.Kind == "image" {
+	if recipe.MinCompute != "" {
+		var major, minor int
+		if _, err := fmt.Sscanf(recipe.MinCompute, "%d.%d", &major, &minor); err != nil || !computeAtLeast(p.GPU.Compute, major, minor) {
+			p.Blockers = append(p.Blockers, "recipe requires compute capability >= "+recipe.MinCompute)
+		}
+	}
+	var textKVBytes float64
+	if recipe.Kind == "image" || recipe.Kind == "video" {
 		minimum := recipe.MemoryFloorMiB
 		p.Task = o.Task
 		if p.Task == "auto" {
 			p.Task = "text-to-image"
+			if recipe.Kind == "video" {
+				p.Task = "text-to-video"
+			}
 		}
-		if p.Task != "text-to-image" && p.Task != "image-to-image" {
+		if recipe.Kind == "video" {
+			if p.Task != "text-to-video" {
+				return p, fmt.Errorf("this model requires --task text-to-video")
+			}
+		} else if p.Task != "text-to-image" && p.Task != "image-to-image" {
 			return p, fmt.Errorf("this model requires --task text-to-image or image-to-image")
+		}
+		if !contains(recipe.Tasks, p.Task) {
+			return p, fmt.Errorf("recipe %s does not support task %s", recipe.ID, p.Task)
 		}
 		p.Runtime = "diffusers"
 		if backend == "docker" {
@@ -183,7 +225,11 @@ func BuildPlan(m Model, h Host, o Options) (Plan, error) {
 		p.Files, p.WeightBytes = weightFiles(m.Hub.Siblings, true)
 		// Files may be fp32 on disk while loading in half precision; retain a conservative estimate.
 		p.EstimatedVRAMMiB = max64(minimum, ceilMiB(float64(p.WeightBytes)*0.65)+4096)
-		p.Warnings = append(p.Warnings, "Image memory estimate assumes one request at a time and <=1024x1024 images; larger shapes or long prompts can OOM.")
+		if recipe.Kind == "video" {
+			p.Warnings = append(p.Warnings, "Video budget assumes the service's bounded resolution/frame/step limits and one active job. Both experts stay resident; no offload or quantization.")
+		} else {
+			p.Warnings = append(p.Warnings, "Image memory estimate assumes one request at a time and <=1024x1024 images; larger shapes or long prompts can OOM.")
+		}
 	} else {
 		if o.Task != "auto" && o.Task != "text-generation" {
 			return p, fmt.Errorf("this is a Transformers model, not a supported Diffusers pipeline")
@@ -212,12 +258,6 @@ func BuildPlan(m Model, h Host, o Options) (Plan, error) {
 		if c.TextConfig != nil {
 			c = *c.TextConfig
 		}
-		if recipe.MinCompute != "" {
-			var major, minor int
-			if _, err := fmt.Sscanf(recipe.MinCompute, "%d.%d", &major, &minor); err != nil || !computeAtLeast(p.GPU.Compute, major, minor) {
-				p.Blockers = append(p.Blockers, "recipe requires compute capability >= "+recipe.MinCompute)
-			}
-		}
 		// vLLM expresses its budget as a fraction of total VRAM. Respect memory
 		// already used by other workloads rather than reserving 90% of total.
 		p.GPUMemoryFraction = math.Floor(0.9*float64(p.GPU.FreeMiB)/float64(p.GPU.TotalMiB)*10000) / 10000
@@ -245,6 +285,7 @@ func BuildPlan(m Model, h Host, o Options) (Plan, error) {
 			kv = 2 * 1024 * 1024 * 1024
 			p.Warnings = append(p.Warnings, "KV-cache dimensions missing; assuming 2 GiB for a single sequence")
 		}
+		textKVBytes = kv
 		p.EstimatedVRAMMiB = ceilMiB(weightMemory*1.15+kv) + 2048
 		p.Warnings = append(p.Warnings, "Text deployment uses "+p.DType+", eager mode and one concurrent sequence; optimized concurrency tuning is future work.")
 		if backend == "native" {
@@ -252,7 +293,42 @@ func BuildPlan(m Model, h Host, o Options) (Plan, error) {
 		}
 	}
 	if len(p.Files) == 0 || p.WeightBytes <= 0 {
-		return p, fmt.Errorf("no sized default safetensors weights found; single-file, variant-only and adapter repositories are not supported")
+		if !m.WeightMetadataChecked {
+			return p, fmt.Errorf("no sized default safetensors weights found; single-file, variant-only and adapter repositories are not supported")
+		}
+	}
+	var weightErr error
+	p.WeightResidentBytes, p.WeightMemoryBasis, weightErr = residentWeightBytes(m, p.Files, p.WeightBytes, p.DType, p.ComponentDTypes)
+	if weightErr != nil {
+		p.Blockers = append(p.Blockers, "weights-alone VRAM preflight failed: "+weightErr.Error()+"; --allow-risk cannot override weight metadata safety")
+	} else {
+		// Compare integer bytes directly, without rounding a potentially huge
+		// model through float64 or overflowing GPU MiB conversion.
+		fits := func(mib int64) bool {
+			return mib > 0 && (mib > math.MaxInt64/(1024*1024) || p.WeightResidentBytes <= mib*(1024*1024))
+		}
+		p.WeightsFitTotal = fits(p.GPU.TotalMiB)
+		p.WeightsFitFree = fits(p.GPU.FreeMiB)
+		if !p.WeightsFitTotal {
+			p.Blockers = append(p.Blockers, fmt.Sprintf("weights alone require %d resident bytes, exceeding selected GPU total VRAM (%d MiB); --allow-risk cannot override", p.WeightResidentBytes, p.GPU.TotalMiB))
+		}
+		if !p.WeightsFitFree {
+			p.Blockers = append(p.Blockers, fmt.Sprintf("weights alone require %d resident bytes, exceeding selected GPU currently free VRAM (%d MiB); --allow-risk cannot override", p.WeightResidentBytes, p.GPU.FreeMiB))
+		}
+		// The independent heuristic includes runtime overhead and remains the
+		// only memory check --allow-risk may override.
+		p.EstimatedVRAMMiB = max64(p.EstimatedVRAMMiB, ceilMiB(float64(p.WeightResidentBytes)*1.15+textKVBytes)+2048)
+	}
+	p.Warnings = append(p.Warnings, "Resident weight bytes are a requested-dtype lower bound: runtime buffers, modules retained in FP32, activations, caches and allocator overhead can require more. A fit flag is not an OOM guarantee.")
+	if backend == "native" && h.ModelCacheInspected {
+		missing := p.WeightBytes - h.CachedWeightBytes
+		if missing < 0 {
+			missing = 0
+		}
+		budget := ceilMiB(float64(missing)*1.05) + 4096
+		if h.ModelCacheFreeMiB < budget {
+			p.Blockers = append(p.Blockers, fmt.Sprintf("native model-cache disk has %d MiB free; missing weights plus 5%%/4 GiB headroom need about %d MiB; choose a larger HF_HUB_CACHE filesystem; --allow-risk cannot override", h.ModelCacheFreeMiB, budget))
+		}
 	}
 	diskBudget := ceilMiB(float64(p.WeightBytes)*1.2) + 20*1024
 	if h.DockerDiskFreeMiB > 0 && h.DockerDiskFreeMiB < diskBudget {
@@ -274,6 +350,7 @@ func BuildPlan(m Model, h Host, o Options) (Plan, error) {
 func weightFiles(files []ModelFile, image bool) ([]string, int64) {
 	var names []string
 	var total int64
+	seen := map[string]bool{}
 	for _, f := range files {
 		if !strings.HasSuffix(f.Name, ".safetensors") || strings.Contains(f.Name, ".fp16.") || strings.Contains(f.Name, ".bf16.") {
 			continue
@@ -282,17 +359,18 @@ func weightFiles(files []ModelFile, image bool) ([]string, int64) {
 		if !image && len(parts) != 1 {
 			continue
 		}
-		if image && (len(parts) != 2 || !(parts[0] == "unet" || parts[0] == "transformer" || parts[0] == "vae" || strings.HasPrefix(parts[0], "text_encoder") || parts[0] == "safety_checker")) {
+		if image && (len(parts) != 2 || !(parts[0] == "unet" || parts[0] == "transformer" || parts[0] == "transformer_2" || parts[0] == "vae" || strings.HasPrefix(parts[0], "text_encoder") || parts[0] == "safety_checker")) {
 			continue
 		}
 		base := parts[len(parts)-1]
 		if !(base == "model.safetensors" || base == "diffusion_pytorch_model.safetensors" || strings.HasPrefix(base, "model-") || strings.HasPrefix(base, "diffusion_pytorch_model-")) {
 			continue
 		}
-		if f.Bytes() <= 0 {
+		if f.Bytes() <= 0 || f.Bytes() > math.MaxInt64-total || seen[f.Name] {
 			return nil, 0
 		} // Never silently undercount an unknown shard.
 		names = append(names, f.Name)
+		seen[f.Name] = true
 		total += f.Bytes()
 	}
 	sort.Strings(names)
