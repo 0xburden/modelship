@@ -1,16 +1,15 @@
-ARG RELEASE_VERSION=v0.2.0
-
 FROM golang:1.24.4 AS build
+# Compatibility only: source-controlled releases/current is authoritative.
 ARG RELEASE_VERSION
 WORKDIR /src
 COPY go.mod ./
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 COPY scripts/ ./scripts/
+COPY releases/ ./releases/
 COPY install.sh ./
-RUN VERSION="$RELEASE_VERSION" sh scripts/release.sh
+RUN RELEASE_VERSION="$RELEASE_VERSION" sh scripts/build-release-site.sh
 
 FROM nginx:1.28-alpine
-ARG RELEASE_VERSION
-COPY --from=build /src/dist/ /usr/share/nginx/html/${RELEASE_VERSION}/
+COPY --from=build /src/dist/site/ /usr/share/nginx/html/
 EXPOSE 80

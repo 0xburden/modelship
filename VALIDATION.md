@@ -236,3 +236,7 @@ Fake-model tests do not establish CUDA/runtime compatibility. Native text and SD
 6. Test graceful termination during loading/generation and retained logs after failures. Native auto-restart/reboot persistence is not implemented.
 7. Test FLUX separately on suitable memory/hardware; it remains unvalidated.
 8. Publish a versioned release via Dokploy and test the curl bootstrap on another fresh supported host.
+
+## Versioned release host: v0.3.0-alpha.1
+
+Release preparation adds a source-controlled version, verified retention of all three original v0.2.0-alpha.1 assets, and an existing-version checksum guard. Four offline regression cases cover stale Dokploy build arguments, retained-file corruption, differing existing versions and identical rebuilds. The release Docker image was built locally with a deliberately stale `RELEASE_VERSION=v0.2.0-alpha.1`; it selected the tracked new version and retained checksum-pinned old files instead of relabeling or removing them. Publication/live endpoint verification is a separate release step.

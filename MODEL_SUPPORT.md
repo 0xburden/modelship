@@ -1,6 +1,6 @@
 # Model recipes and requested-model support
 
-This iteration lives on `feat/model-recipes`. It is **not** included in the published `v0.2.0-alpha.1`, and must not overwrite that version's files. The recipe registry is embedded in `internal/modelship/assets/recipes.json`.
+These recipes ship in `v0.3.0-alpha.1`. They are **not** included in `v0.2.0-alpha.1`; that earlier release remains byte-for-byte unchanged. The recipe registry is embedded in `internal/modelship/assets/recipes.json`.
 
 ## Status semantics
 
@@ -194,4 +194,4 @@ Start with startup-time adapters rather than unauthenticated hot-swapping APIs:
 - Account for adapter memory and combined licenses; preserve the unmodified cached base.
 - Add CPU shape/metadata tests and real one-family-at-a-time GPU tests. No merging, dynamic public adapter loading, training, or arbitrary remote code by default.
 
-Publish a new version (for example `v0.3.0-alpha.1`) only after the intended scope is tested. Change Dokploy's explicit `RELEASE_VERSION` build argument before deploying new code; changing the Dockerfile default alone does not override an existing build argument.
+Publish a new version only after the intended scope is tested. The tracked `releases/current` now selects `v0.3.0-alpha.1`; the legacy Dokploy `RELEASE_VERSION` build argument is ignored with a warning. Release-site builds retain checksum-pinned prior assets and fail closed if the current public version already has different checksums. Bump the tracked version and extend `releases/retained.sha256` before the next release.

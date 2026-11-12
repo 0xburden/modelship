@@ -36,7 +36,7 @@ The Docker command builds for the container's platform. Use `scripts/release.sh`
 
 ## Recipe discovery (feature branch)
 
-The `feat/model-recipes` iteration adds host-independent `modelship catalog` and `modelship inspect MODEL [--json]`, isolated dependency profiles, and experimental adapters for the requested model families. Weights-alone VRAM is checked from bounded safetensors headers, separately from download bytes and runtime heuristics. Research-only licensing, reviewed repository-code consent, explicit WAN format selection, and hardware limits remain enforced; nothing is silently substituted or quantized. See **[MODEL_SUPPORT.md](MODEL_SUPPORT.md)** for the requested-model matrix and LoRA roadmap. These additions are not in the published `v0.2.0-alpha.1`.
+The `v0.3.0-alpha.1` release adds host-independent `modelship catalog` and `modelship inspect MODEL [--json]`, isolated dependency profiles, and experimental adapters for the requested model families. Weights-alone VRAM is checked from bounded safetensors headers, separately from download bytes and runtime heuristics. Research-only licensing, reviewed repository-code consent, explicit WAN format selection, and hardware limits remain enforced; nothing is silently substituted or quantized. See **[MODEL_SUPPORT.md](MODEL_SUPPORT.md)** for the requested-model matrix and LoRA roadmap. These additions are not in the published `v0.2.0-alpha.1`.
 
 ## Native quickstart (Thunder / working host PyTorch)
 
@@ -202,7 +202,7 @@ VERSION=v0.2.0 sh scripts/release.sh
 # dist/modelship_linux_amd64, dist/install.sh, dist/SHA256SUMS
 ```
 
-Host all three over HTTPS at a versioned path, e.g. **your own** `https://deploy.example.com/v0.2.0/`, using a static web server on Dokploy, or attach them to a GitHub release. Do not publish a moving "latest" directory as if it were immutable. This repository does not yet have a public release URL.
+Host all three over HTTPS at a versioned path, e.g. **your own** `https://deploy.example.com/v0.2.0/`, using a static web server on Dokploy, or attach them to a GitHub release. Do not publish a moving "latest" directory as if it were immutable. Public releases are hosted at `https://modelship.bubuntu.xyz/`; the current source-controlled version is in `releases/current`.
 
 On the fresh server:
 
@@ -228,7 +228,25 @@ Checksums from the same release host detect corruption, **not a compromised host
 
 ### Optional Dokploy static image
 
-Deploy `Dockerfile.releases` from this Git repository in Dokploy and route an HTTPS domain to container port 80. The multi-stage Dockerfile builds the Linux binary, installer, and checksums itself; `dist/` does not need to be committed or uploaded. Its build argument `RELEASE_VERSION` defaults to `v0.2.0`; set it to a new version for each published release and deploy a fixed Git commit/tag. The service only serves static assets, not model requests or credentials. See **[DEPLOYMENT.md](DEPLOYMENT.md)** for the walkthrough.
+Deploy `Dockerfile.releases` from this Git repository in Dokploy and route an HTTPS domain to container port 80. The multi-stage Dockerfile builds the Linux binary, installer, and checksums itself; `dist/` does not need to be committed or uploaded. The tracked `releases/current` file selects the version (`v0.3.0-alpha.1`); the old `RELEASE_VERSION` build argument is ignored with a warning. The build preserves checksum-pinned prior releases and refuses to overwrite an existing version with different bytes. Deploy a reviewed commit/tag. The service only serves static assets, not model requests or credentials. See **[DEPLOYMENT.md](DEPLOYMENT.md)** for the walkthrough.
+
+## Install WAN from the versioned release
+
+On Linux x86_64 with an idle A10080GB-class GPU, Python>=3.11 and existing working CUDA PyTorch>=2.9, plus sufficient free disk (roughly150GB recommended):
+
+```sh
+export MODELSHIP_RELEASE_BASE=https://modelship.bubuntu.xyz/v0.3.0-alpha.1
+curl -fsSL "$MODELSHIP_RELEASE_BASE/install.sh" -o /tmp/modelship-install.sh
+# Inspect this trusted script before running it.
+sh /tmp/modelship-install.sh deploy Wan-AI/Wan2.2-T2V-A14B \
+  --backend native --python python3 --experimental \
+  --weights-repo Wan-AI/Wan2.2-T2V-A14B-Diffusers \
+  --revision 5be7df9619b54f4e2667b2755bc6a756675b5cd7 \
+  --task text-to-video --name wan-video --port 18032 \
+  --allow-risk --wait 90m --yes
+```
+
+`--allow-risk` acknowledges the conservative activation estimate on the tested80GB configuration. It cannot bypass hard weights/free-VRAM/disk checks. No host PyTorch/driver replacement, quantization or offload is enabled. The API binds to localhost; use an SSH/private tunnel for the console, never publicly expose this unauthenticated model service. The new binary replaces `~/.local/bin/modelship` unless `MODELSHIP_INSTALL_DIR` is set.
 
 ## Security and operational limits
 
