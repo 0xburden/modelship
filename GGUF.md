@@ -1,6 +1,14 @@
 # Experimental GGUF chat and vision (v0.3.0-alpha.7)
 
-**Published v0.3.0-alpha.6 remains text-only with the original single Q4 artifact.** The quantization menus, optional vision and schema 6 below target **v0.3.0-alpha.7**, the fresh version for this merge; alpha.6 assets are retained byte-for-byte. Alpha.6 repaired Ubuntu22.04 runtime compatibility. A user reports working GGUF text inference after that repair; we have not independently measured that deployment. **Actual vision inference, quality and peak memory remain unvalidated.** CPU fixtures, source/ABI inspection and bounded real artifact headers are not GPU validation.
+**Published v0.3.0-alpha.6 remains text-only with the original single Q4 artifact.** The quantization menus, optional vision and schema 6 below target **v0.3.0-alpha.7**, the fresh version for this merge; alpha.6 assets are retained byte-for-byte. Alpha.6 repaired Ubuntu22.04 runtime compatibility. A user reports working GGUF text inference after that repair; we have not independently measured that deployment. **GGUF vision (interpretive/image understanding) is user-validated on a real GPU as of 2026-11-13.** Independent reproduction, quantization-wide coverage and peak-memory measurements are not established. CPU fixtures, source/ABI inspection and bounded real artifact headers are not GPU validation.
+
+## Validation status: user-validated image understanding
+
+On **2026-11-13**, the user confirmed successful real-GPU GGUF vision/image interpretation and reported deleting the instance afterward to save budget. This validates the reported image-understanding run; it is **not** image generation/editing or a claim that every reviewed quantization, GPU, resolution, context size or maximum workload has passed.
+
+The report did not include the exact artifact/quantization, GPU, request/output, measured memory or lifecycle details. We have not independently reproduced it, and Console-to-GPU routing was not specified. The profile pins below describe the implementation, not a reconstructed test configuration. No replacement instance or GPU work was created for this status update.
+
+The CLI remains experimental and hard safety checks remain enforced. Published alpha.7's embedded “unvalidated” notices predate this confirmation; the versioned binary/installer are not rewritten merely to change that historical wording. This source-controlled report is the updated validation record.
 
 ## Explicit target
 
@@ -102,4 +110,4 @@ Both completion and chat use the embedded instruct chat template with thinking d
 
 `status`, `logs`, `smoke`, `stop`, `start`, `configure` and `uninstall` retain `--backend native --name qwen-gguf`. Access changes require stop/configure/start and do not install Python or rewrite runtime files. New native state is **schema 6**, rejected by older CLIs so vision execution constraints cannot be ignored; Python schemas 1–5 and existing text-only GGUF schema 5 remain readable. Keep using the updated CLI after migration. Stop signals the managed process group, including the child; workers survive SSH disconnect, not crash/reboot automatically. Uninstall retains shared model caches and owner API keys.
 
-Before calling this GPU-supported, validate the actual pinned archives/model: CUDA load and placement, meaningful completion/chat quality, context/media/auth/busy errors, memory snapshots/peaks, console compatibility, stop/start, cached restart and no host package changes. Vision/projector code is experimental branch work, never inferred from the architecture name; real CUDA image understanding/quality/load and restart validation still require explicit authorization.
+The user-confirmed image-understanding run does not establish the remaining validation matrix: independent reproduction, CUDA placement/peaks, boundary/context/auth/busy behavior on a real model, Console integration, stop/start and cached restart. New live GPU work still requires separate authorization; do not recreate the user-deleted instance for verification.
