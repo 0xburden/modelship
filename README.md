@@ -13,10 +13,12 @@ A GPU-first model deployment CLI: inspect a Hugging Face repository and the loca
 On a supported NVIDIA server with the prerequisites already installed:
 
 ```sh
-curl -fsSL https://modelship.bubuntu.xyz/v0.3.0-alpha.6/install.sh -o install.sh
+curl -fsSL https://modelship.bubuntu.xyz/latest/install.sh -o install.sh
 # Inspect the downloaded script from your trusted release before running it.
 sh install.sh
 ```
+
+`/latest/install.sh` is a non-cacheable moving entry point, copied from the version selected by `releases/current`. The downloaded script still pins an immutable version for both the binary and checksums, so an update during installation cannot mix releases. For reproducible installs, use a versioned URL such as `https://modelship.bubuntu.xyz/v0.3.0-alpha.7/install.sh`. No `/latest` binary/checksum aliases are needed.
 
 The published installer knows its immutable release URL; **no environment variable or model flags are needed**. It verifies/installs the CLI first, then launches guided setup when stdin/stdout are terminals. You can also run `~/.local/bin/modelship launch`, or simply `modelship` from a terminal after adding `~/.local/bin` to PATH.
 
