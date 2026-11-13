@@ -30,22 +30,6 @@ func llamaEnv(cfg NativeConfig, dir string) []string {
 	// broad driver/library path manipulation are inherited by the native engine.
 	return []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=" + dir, "TMPDIR=" + dir, "CUDA_VISIBLE_DEVICES=" + cfg.Plan.GPU.UUID, "LD_LIBRARY_PATH=" + strings.Join(libs, ":")}
 }
-func probeLlamaCUDA(ctx context.Context, cfg NativeConfig, dir string) error {
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-	path, e := fileWithin(dir, cfg.RuntimeBinary)
-	if e != nil {
-		return e
-	}
-	cmd := exec.CommandContext(ctx, path, "--list-devices")
-	cmd.Env = llamaEnv(cfg, dir)
-	cmd.Dir = dir
-	output, e := cmd.CombinedOutput()
-	if e != nil || !strings.Contains(string(output), "CUDA0") {
-		return fmt.Errorf("pinned llama.cpp CUDA device preflight failed; no CPU fallback or host library changes are attempted")
-	}
-	return nil
-}
 func llamaArgs(p Plan, port int, keyPath string) []string {
 	return []string{"--model", ggufModelPath(p), "--alias", p.Model, "--host", "127.0.0.1", "--port", strconv.Itoa(port), "--api-key-file", keyPath,
 		"--device", "CUDA0", "--gpu-layers", "all", "--split-mode", "none", "--main-gpu", "0", "--fit", "off", "--ctx-size", strconv.Itoa(p.Context), "--no-context-shift", "--parallel", "1",

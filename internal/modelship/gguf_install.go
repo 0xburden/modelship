@@ -411,6 +411,9 @@ func deployGGUF(ctx context.Context, p Plan, wait time.Duration) error {
 	if e := verifyWeightFitNow(ctx, p); e != nil {
 		return e
 	}
+	if e := checkLlamaRuntimeABI(); e != nil {
+		return e
+	}
 	dir, e := nativeDir(p.Name)
 	if e != nil {
 		return e
@@ -471,6 +474,9 @@ func deployGGUF(ctx context.Context, p Plan, wait time.Duration) error {
 	}
 	cfg.RuntimeBinary, cfg.RuntimeLibraries, cfg.RuntimeFiles, e = installedRuntime(dir)
 	if e != nil {
+		return e
+	}
+	if e = writeJSONFile(filepath.Join(dir, "config.json"), cfg); e != nil {
 		return e
 	}
 	if e = probeLlamaCUDA(ctx, cfg, dir); e != nil {
