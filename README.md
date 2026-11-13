@@ -2,7 +2,7 @@
 
 A GPU-first model deployment CLI: inspect a Hugging Face repository and the local NVIDIA server, review a plan, then deploy a pinned model revision through Docker or a native runtime.
 
-**New in v0.3.0-alpha.5:** an experimental, explicitly pinned text-only GGUF/llama.cpp adapter is described in [GGUF.md](GGUF.md). It is **not** in the published alpha.4 installer and has not yet passed actual GPU/model inference validation. Vision remains a separate follow-up.
+**GGUF repair in v0.3.0-alpha.6:** an experimental, explicitly pinned text-only GGUF/llama.cpp adapter is described in [GGUF.md](GGUF.md). Alpha.6 rebuilds the native core for Ubuntu22.04 (glibc2.35/GLIBCXX3.4.30); alpha.5’s upstream binary is incompatible with that userspace. Actual GPU/model inference is still unvalidated. Vision remains a separate follow-up.
 
 **Early MVP, not a universal model converter or production control plane.** Go handles orchestration; vLLM (Docker), Transformers (native text), and a small Python/Diffusers service perform inference. No agent API or backend is required.
 

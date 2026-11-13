@@ -4,7 +4,7 @@ Use this backend when host CUDA PyTorch works but Docker GPU passthrough does no
 
 ## Requirements
 
-The experimental [GGUF adapter](GGUF.md) is a separate standalone llama.cpp path: no Python/PyTorch requirement, pinned CUDA12.8 userspace runtime, and its own device/disk/artifact checks. The requirements below otherwise apply to Python recipes.
+The experimental [GGUF adapter](GGUF.md) is a separate standalone llama.cpp path: no Python/PyTorch requirement, pinned CUDA12.8 userspace runtime, and its own device/disk/artifact checks. Alpha.6 rebuilds its core for glibc2.35/GLIBCXX3.4.30; alpha.5’s upstream core does not work on that Ubuntu22.04 userspace. The requirements below otherwise apply to Python recipes.
 
 - Linux amd64 with an NVIDIA GPU and working `nvidia-smi`.
 - Python 3.10+ with **already installed, functioning CUDA-enabled PyTorch** for established recipes; experimental recipes require Python >=3.11; new Qwen/Image/MOSS/WAN profiles also check PyTorch >=2.9 without replacing it.
