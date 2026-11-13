@@ -335,6 +335,9 @@ func runNativeInstall(ctx context.Context, python string, args ...string) error 
 }
 func startNative(ctx context.Context, cfg NativeConfig, dir string, wait time.Duration) error {
 	if cfg.Plan.GGUF != nil {
+		if err := checkLlamaRuntimeABI(cfg.Plan); err != nil {
+			return err
+		}
 		if err := verifyGGUFInstall(cfg, dir); err != nil {
 			return err
 		}

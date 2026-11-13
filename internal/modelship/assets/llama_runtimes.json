@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "default": "llama-b12110-cuda12.8-ubuntu22.04-r1",
+  "runtimes": [
+    {
+      "id": "llama-b12110-cuda12.8",
+      "source_commit": "cd959bae99ff4bed22bef2604f45241c09bbb8c8",
+      "minimum_glibc": "2.38",
+      "minimum_glibcxx": "3.4.32",
+      "description": "Legacy upstream CUDA12.8 package; Ubuntu24.04 userspace, incompatible with glibc2.35. Retained for existing deployments only.",
+      "artifacts": [
+        {
+          "name": "core.tar.gz",
+          "size": 187314621,
+          "sha256": "4af1e1da23661db4a5b84b29aae16ebc053df689c5b8b1427c4670f2c6406d8c",
+          "url": "https://github.com/ggml-org/llama.cpp/releases/download/b12110/llama-b12110-bin-ubuntu-cuda-12.8-x64.tar.gz"
+        },
+        {
+          "name": "cuda.tar.gz",
+          "size": 594371477,
+          "sha256": "6f1d562086d84ae85df880d3711079ec225602b51d530608e5001600625067dd",
+          "url": "https://github.com/ggml-org/llama.cpp/releases/download/b12110/cudart-llama-b12110-bin-ubuntu-cuda-12.8-x64.tar.gz"
+        }
+      ]
+    },
+    {
+      "id": "llama-b12110-cuda12.8-ubuntu22.04-r1",
+      "source_commit": "cd959bae99ff4bed22bef2604f45241c09bbb8c8",
+      "minimum_glibc": "2.35",
+      "minimum_glibcxx": "3.4.30",
+      "description": "Ubuntu22.04 rebuild of pinned b12110: SM80 cubin plus compute80 PTX, baseline SSE4.2 CPU, no OpenSSL/subprocess/UI fetching. Actual CUDA/model inference remains unvalidated.",
+      "artifacts": [
+        {
+          "name": "core.tar.gz",
+          "size": 50987396,
+          "sha256": "54351967b6120961a76e5a04704797dfdef60ba512f1b210818cf905977dff64",
+          "url": "https://github.com/0xburden/modelship/releases/download/runtime-llama-b12110-u2204-r1/llama-b12110-ubuntu22.04-cuda12.8-r1.tar.gz"
+        },
+        {
+          "name": "cuda.tar.gz",
+          "size": 594371477,
+          "sha256": "6f1d562086d84ae85df880d3711079ec225602b51d530608e5001600625067dd",
+          "url": "https://github.com/ggml-org/llama.cpp/releases/download/b12110/cudart-llama-b12110-bin-ubuntu-cuda-12.8-x64.tar.gz"
+        }
+      ]
+    }
+  ]
+}

@@ -24,11 +24,6 @@ type RuntimeFile struct {
 	Link   string `json:"link,omitempty"`
 }
 
-var llamaArtifacts = []ArtifactPin{
-	{Name: "core.tar.gz", Size: 187314621, SHA256: "4af1e1da23661db4a5b84b29aae16ebc053df689c5b8b1427c4670f2c6406d8c", URL: "https://github.com/ggml-org/llama.cpp/releases/download/b12110/llama-b12110-bin-ubuntu-cuda-12.8-x64.tar.gz"},
-	{Name: "cuda.tar.gz", Size: 594371477, SHA256: "6f1d562086d84ae85df880d3711079ec225602b51d530608e5001600625067dd", URL: "https://github.com/ggml-org/llama.cpp/releases/download/b12110/cudart-llama-b12110-bin-ubuntu-cuda-12.8-x64.tar.gz"},
-}
-
 func digestFile(path string) (string, error) {
 	f, e := os.Open(path)
 	if e != nil {
@@ -411,6 +406,9 @@ func deployGGUF(ctx context.Context, p Plan, wait time.Duration) error {
 	if e := verifyWeightFitNow(ctx, p); e != nil {
 		return e
 	}
+	if e := checkLlamaRuntimeABI(p); e != nil {
+		return e
+	}
 	dir, e := nativeDir(p.Name)
 	if e != nil {
 		return e
@@ -459,9 +457,13 @@ func deployGGUF(ctx context.Context, p Plan, wait time.Duration) error {
 	}
 	client := artifactHTTPClient()
 	defer client.CloseIdleConnections()
-	for i, pin := range llamaArtifacts {
+	runtimeSpec, e := loadLlamaRuntime(p.GGUF.Runtime)
+	if e != nil {
+		return e
+	}
+	for i, pin := range runtimeSpec.Artifacts {
 		archive := filepath.Join(dir, "downloads", pin.Name)
-		fmt.Printf("Downloading verified llama.cpp runtime component %d/%d (no host package changes).\n", i+1, len(llamaArtifacts))
+		fmt.Printf("Downloading verified llama.cpp runtime component %d/%d (no host package changes).\n", i+1, len(runtimeSpec.Artifacts))
 		if e = downloadVerified(ctx, client, pin.URL, "", archive, pin); e != nil {
 			return e
 		}
@@ -471,6 +473,9 @@ func deployGGUF(ctx context.Context, p Plan, wait time.Duration) error {
 	}
 	cfg.RuntimeBinary, cfg.RuntimeLibraries, cfg.RuntimeFiles, e = installedRuntime(dir)
 	if e != nil {
+		return e
+	}
+	if e = writeJSONFile(filepath.Join(dir, "config.json"), cfg); e != nil {
 		return e
 	}
 	if e = probeLlamaCUDA(ctx, cfg, dir); e != nil {

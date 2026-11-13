@@ -47,8 +47,11 @@ func validateGGUFPlan(p Plan) error {
 	if e != nil {
 		return e
 	}
-	if p.Backend != "native" || p.Runtime != "llama.cpp" || p.RecipeID != "qwen35-gguf-text" || !p.DisableThinking || !p.TemplateCompletions || len(p.Files) != 1 || p.Files[0] != pin.Name || p.WeightBytes != pin.Size || p.Task != "text-generation" || p.GGUF.Runtime != "llama-b12110-cuda12.8" || p.GGUF.File.Size != pin.Size || p.GGUF.File.SHA256 != pin.SHA256 || p.GGUF.Metadata.Architecture != "qwen35" || p.GGUF.Metadata.TensorBytes <= 0 || p.GGUF.Metadata.TensorBytes > pin.Size || p.WeightResidentBytes != p.GGUF.Metadata.TensorBytes || p.Context < 128 || p.Context > 32768 || !filepath.IsAbs(p.ModelCacheDir) {
+	if p.Backend != "native" || p.Runtime != "llama.cpp" || p.RecipeID != "qwen35-gguf-text" || !p.DisableThinking || !p.TemplateCompletions || len(p.Files) != 1 || p.Files[0] != pin.Name || p.WeightBytes != pin.Size || p.Task != "text-generation" || p.GGUF.File.Size != pin.Size || p.GGUF.File.SHA256 != pin.SHA256 || p.GGUF.Metadata.Architecture != "qwen35" || p.GGUF.Metadata.TensorBytes <= 0 || p.GGUF.Metadata.TensorBytes > pin.Size || p.WeightResidentBytes != p.GGUF.Metadata.TensorBytes || p.Context < 128 || p.Context > 32768 || !filepath.IsAbs(p.ModelCacheDir) {
 		return fmt.Errorf("invalid GGUF deployment policy/budgets")
+	}
+	if _, e := loadLlamaRuntime(p.GGUF.Runtime); e != nil {
+		return e
 	}
 	return nil
 }
@@ -122,6 +125,11 @@ func buildGGUFPlan(m Model, h Host, o Options) (Plan, error) {
 			p.Blockers = append(p.Blockers, "GGUF missing weights plus runtime/install/headroom budget exceed cache disk; --allow-risk cannot override")
 		}
 	}
+	runtimeSpec, e := loadLlamaRuntime(p.GGUF.Runtime)
+	if e != nil {
+		return p, e
+	}
+	p.Warnings = append(p.Warnings, fmt.Sprintf("Runtime %s requires system GLIBC_%s / GLIBCXX_%s; checked before runtime downloads, with no host library replacement", runtimeSpec.ID, runtimeSpec.MinimumGLIBC, runtimeSpec.MinimumGLIBCXX))
 	p.Warnings = append(p.Warnings, h.Warnings...)
 	p.Warnings = append(p.Warnings, "Experimental text-only GGUF: no independent live GPU/model inference validation yet; no implicit mmproj, MTP, calibration, quant conversion or CPU fallback", "llama.cpp b12110 CUDA12.8 is separately checksum-pinned; no Python/PyTorch/driver installation or replacement", "Full GPU layer placement, device CUDA0, one slot, fixed context and --fit off are explicit; fixed backend CPU metadata/tensors can remain on host", "Source file bytes, encoded tensor-byte budget and runtime/host memory are distinct; context/recurrent state/temporary allocation may still OOM")
 	if e := validateGGUFPlan(p); e != nil {

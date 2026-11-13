@@ -1,5 +1,15 @@
 # Validation record
 
+## Alpha.6 GGUF runtime ABI repair
+
+The user’s alpha.5 deployment stopped before CUDA enumeration/model download: host glibc2.35 lacked GLIBC2.38, and its confirmed GLIBCXX maximum3.4.30 lacked the upstream core’s3.4.32 requirement. No host glibc/libstdc++/driver/Torch changes were made.
+
+The exact b12110 source was rebuilt in a digest-pinned CUDA12.8.1/Ubuntu22.04 image with checksum-pinned CMake3.31.8 and CCCL3.4.3, offline compilation, SM80 cubin/compute80 PTX and baseline SSE4.2 CPU. Core archive:50,987,396 bytes, SHA-256 `54351967b6120961a76e5a04704797dfdef60ba512f1b210818cf905977dff64`. It was built in run43390311159 at source9dda997, retained before its stale3.4.29 audit failed, then independently audited with the corrected confirmed3.4.30 ceiling in **successful run43397657238**. No recompilation was needed for audit changes.
+
+The Ubuntu22.04 audit verified the full core/CUDA archive hashes, ELF GLIBC<=2.35/GLIBCXX<=3.4.30/CXXABI<=1.3.13 requirements, dependency resolution except the expected absent `libcuda.so.1` on a CPU-only runner, actual `--version`, `--help`, `--list-devices` startup and all configured CLI flags. It did not load model weights, emulate a GPU or claim inference quality/VRAM validation. Production still requires a real CUDA0 device; no driver, C runtime, C++ runtime or CPU fallback is bundled.
+
+New deployments use a distinct saved runtime identity; healthy legacy deployments keep their original binary/ABI pins. ELF host-ABI checks happen before downloading runtime dependencies. Diagnostic tests cover real loader errors, private bounded logs, env/terminal safety, timeout and false CUDA-positive rejection. Actual GPU/model load and inference remain a user-test gate. Alpha.6 preparation retains all18 previous CLI assets byte-for-byte; no old release is overwritten.
+
 ## Alpha.5 GGUF text: header and CPU-adapter evidence only
 
 - Exact target and runtime pins: [GGUF.md](GGUF.md). No instance changes or model weight downloads were made. Full model/asset SHA-256 pins were checked against immutable HF LFS and named GitHub release metadata; actual archive/model bytes have not been downloaded or independently hash-verified in this run.

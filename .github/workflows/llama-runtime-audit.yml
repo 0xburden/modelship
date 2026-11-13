@@ -1,0 +1,72 @@
+name: Audit retained Ubuntu 22.04 runtime
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/gguf-ubuntu2204-runtime]
+    paths: ['runtime/llama/audit.sh', '.github/workflows/llama-runtime-audit.yml']
+permissions:
+  contents: read
+  actions: read
+  checks: read
+jobs:
+  audit:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 110
+    env:
+      CANDIDATE_RUN_ID: '43390311159'
+      CANDIDATE_SOURCE: '9dda997af8cc6a82ea36ffd719f9269a49bf97c2'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Wait for retained compiled candidate (its older audit may fail)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run watch "$CANDIDATE_RUN_ID" --interval 120 --compact || true
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID" --jq .head_sha)" = "$CANDIDATE_SOURCE"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: UNVALIDATED-llama-u2204-sm80-43390311159
+          run-id: '43390311159'
+          github-token: ${{ github.token }}
+          path: runtime-out
+      - name: Verify package, actual user ABI floor and pinned CUDA dependencies
+        run: |
+          mkdir -p runtime-check/core runtime-check/cuda
+          (cd runtime-out && sha256sum -c SHA256SUMS)
+          tar -xzf runtime-out/llama-b12110-ubuntu22.04-cuda12.8-r1.tar.gz -C runtime-check/core
+          curl --fail --location --retry 3 --proto '=https' --proto-redir '=https' \
+            -o runtime-check/cuda.tar.gz \
+            https://github.com/ggml-org/llama.cpp/releases/download/b12110/cudart-llama-b12110-bin-ubuntu-cuda-12.8-x64.tar.gz
+          echo '6f1d562086d84ae85df880d3711079ec225602b51d530608e5001600625067dd  runtime-check/cuda.tar.gz' | sha256sum -c -
+          tar -xzf runtime-check/cuda.tar.gz --strip-components=1 -C runtime-check/cuda
+          libs="$PWD/runtime-check/core:$PWD/runtime-check/cuda"
+          sh runtime/llama/audit.sh runtime-check/core runtime-out/evidence/host-core-abi.txt "$libs" 1
+          sh runtime/llama/audit.sh runtime-check/cuda runtime-out/evidence/host-cuda-abi.txt "$libs" 1
+          for arg in version help list-devices; do
+            env -i PATH=/usr/bin:/bin HOME="$RUNNER_TEMP" LD_LIBRARY_PATH="$libs" \
+              runtime-check/core/llama-server "--$arg" > "runtime-out/evidence/host-$arg.txt" 2>&1
+          done
+          ! grep -E 'GLIBC.*not found|GLIBCXX.*not found|error while loading shared libraries' runtime-out/evidence/host-list-devices.txt
+          for flag in --fit --no-context-shift --api-key-file --no-agent --no-mmproj --reasoning --spec-type; do
+            grep -q -- "$flag" runtime-out/evidence/host-help.txt
+          done
+          cat runtime-out/SHA256SUMS
+          cat runtime-out/evidence/size.txt
+          cat runtime-out/evidence/host-version.txt
+          tail -n 1 runtime-out/evidence/host-core-abi.txt
+          tail -n 1 runtime-out/evidence/host-cuda-abi.txt
+      - name: Retain independently audited candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: AUDITED-llama-u2204-sm80-${{ github.run_id }}
+          path: runtime-out/
+          compression-level: 0
+          retention-days: 7
+      - name: Retain audit diagnostics even on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: runtime-candidate-audit-diagnostics-${{ github.run_id }}
+          path: runtime-out/evidence/
+          retention-days: 7
+          if-no-files-found: ignore

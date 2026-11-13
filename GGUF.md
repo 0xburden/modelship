@@ -1,6 +1,6 @@
-# Experimental GGUF text adapter (v0.3.0-alpha.5)
+# Experimental GGUF text adapter (v0.3.0-alpha.6)
 
-**Introduced in v0.3.0-alpha.5; not available in older installers.** This is a first, deliberately narrow adapter, not general GGUF or prequantized Transformers support. Live loading/inference with the actual model and CUDA release binaries is still unvalidated. Do not treat source support or CPU fixtures as a GPU quality/fit guarantee.
+**GGUF was introduced in alpha.5; use alpha.6 for the Ubuntu 22.04 compatibility repair.** This is a first, deliberately narrow adapter, not general GGUF or prequantized Transformers support. Live loading/inference with the actual model and CUDA release binaries is still unvalidated. Do not treat source support or CPU fixtures as a GPU quality/fit guarantee.
 
 ## Explicit target
 
@@ -14,22 +14,22 @@ No automatic quant choice, conversion, repository Python, alternate revision, CP
 
 ## Hardware and runtime
 
-Linux amd64, NVIDIA compute capability >=8.0, driver >=570.26, working `nvidia-smi`, sufficient free VRAM/disk and host RAM. This path does **not** require, install or replace Python, PyTorch, system CUDA packages or drivers. The existing `doctor --backend native` Python check pertains to Python-based recipes, not this adapter.
+Linux amd64, NVIDIA compute capability >=8.0, driver >=570.26, working `nvidia-smi`, sufficient free VRAM/disk and host RAM, system **glibc >=2.35 / GLIBCXX >=3.4.30**, and SSE4.2 CPU instructions. This path does **not** require, install or replace Python, PyTorch, system CUDA packages or drivers. The existing `doctor --backend native` Python check pertains to Python-based recipes, not this adapter.
 
 The standalone runtime is llama.cpp **b12110**, source reviewed at `cd959bae99ff4bed22bef2604f45241c09bbb8c8`:
 
-| Upstream release asset | Compressed bytes | SHA-256 |
+| Runtime release asset | Compressed bytes | SHA-256 |
 | --- | ---: | --- |
-| `llama-b12110-bin-ubuntu-cuda-12.8-x64.tar.gz` | 187314621 | `4af1e1da23661db4a5b84b29aae16ebc053df689c5b8b1427c4670f2c6406d8c` |
+| `llama-b12110-ubuntu22.04-cuda12.8-r1.tar.gz` | 50987396 | `54351967b6120961a76e5a04704797dfdef60ba512f1b210818cf905977dff64` |
 | `cudart-llama-b12110-bin-ubuntu-cuda-12.8-x64.tar.gz` | 594371477 | `6f1d562086d84ae85df880d3711079ec225602b51d530608e5001600625067dd` |
 
-Assets download from the named GitHub release, never `latest`. Full size/SHA-256 verification precedes extraction/execution. Extraction rejects path escapes, special/hardlink entries, escaping/unresolved symlinks, duplicates and expansion beyond its budgets. Installed file hashes and link targets are saved and rechecked on startup. Bundled library paths are scoped to the child process, not exported into the shell or host environment. No broad host NVML/library overrides are attempted. Review upstream [llama.cpp licensing](https://github.com/ggml-org/llama.cpp/blob/cd959bae99ff4bed22bef2604f45241c09bbb8c8/LICENSE) and the checkpoint's own terms.
+The rebuilt core downloads from Modelship’s public `runtime-llama-b12110-u2204-r1` GitHub release; the unchanged CUDA library archive downloads from upstream b12110. No token or `latest` lookup is used. The audited build recipe is `runtime/llama/Dockerfile`: digest-pinned Ubuntu22.04/CUDA12.8.1 builder, checksum-pinned CMake/CCCL/source, offline compilation, SM80 cubin + compute80 PTX baseline, SSE4.2 baseline CPU and no downloaded UI/OpenSSL/subprocess support. Higher GPU SMs can JIT the PTX; optimized per-generation cubins are not selected implicitly. Full size/SHA-256 verification precedes extraction/execution. Extraction rejects path escapes, special/hardlink entries, escaping/unresolved symlinks, duplicates and expansion beyond its budgets. Installed file hashes and link targets are saved and rechecked on startup. Bundled library paths are scoped to the child process, not exported into the shell or host environment. No broad host NVML/library overrides are attempted. Review upstream [llama.cpp licensing](https://github.com/ggml-org/llama.cpp/blob/cd959bae99ff4bed22bef2604f45241c09bbb8c8/LICENSE) and the checkpoint's own terms.
 
 Only the selected GPU UUID is visible to the child: `CUDA0`, all GPU layers, no split, one slot, fixed context, **automatic fit and context shifting disabled**. Essential fixed backend CPU metadata/tensors/operations can still remain on the host; this is not a claim that every byte or operation resides on the GPU. A failed CUDA device probe stops installation before downloading model weights. Actual model warmup/readiness follows loading; device enumeration alone is not inference validation.
 
 ## Plan, then deploy
 
-With v0.3.0-alpha.5 or newer:
+With v0.3.0-alpha.6 or newer:
 
 ```sh
 # Metadata/header only; no GPU required and no tensor payloads downloaded.
@@ -54,9 +54,17 @@ Alternatively, `modelship launch` asks for the exact filename, skips Python ques
 
 The encoded tensor-byte **placement budget** must fit both total and currently free selected-GPU VRAM. This is conservative for fixed CPU tensors, not a measured resident minimum or peak. The runtime estimate separately budgets F16 KV for all advertised blocks (conservative for this hybrid architecture) plus 8 GiB for recurrent state, temporary allocations and activations. **`--allow-risk` only acknowledges this heuristic; it cannot override the weight-placement budget, disk, metadata, runtime or access policy.** VRAM is refreshed before install/launch/manual starts; no reservation is made. 4096 is a preset; this initial adapter accepts 128–32768, also bounded by the header. Advertised 262144 is not a tested GPU capacity. Host RAM and actual activation peaks remain unvalidated.
 
-The selected missing file plus 5% and 12 GiB must fit the cache filesystem during planning. Installation refreshes disk checks, requires 12 GiB in deployment-state storage for runtime/setup, and accounts for shared versus separate filesystems. Runtime archive expansion is separately bounded. Cache location follows HF cache precedence, but the verified GGUF is stored under `CACHE/modelship-gguf/unsloth--Qwen3.8-27B-GGUF/REVISION/FILENAME`, not a Python snapshot. Full model SHA-256 and the saved header metadata are checked before each launch; this adds sequential disk reads on cold starts.
+The selected missing file plus 5% and 12 GiB must fit the cache filesystem during planning. Installation refreshes disk checks, requires 12 GiB in deployment-state storage for runtime/setup, and accounts for shared versus separate filesystems. Runtime archive expansion is separately bounded. Cache location follows HF cache precedence, but the verified GGUF is stored under `CACHE/modelship-gguf/unsloth--Qwen3.8-27B-GGUF/REVISION/FILENAME`, not a Python snapshot. Runtime identity is saved: the new core is `llama-b12110-cuda12.8-ubuntu22.04-r1`; existing healthy legacy `llama-b12110-cuda12.8` deployments keep their original pins and GLIBC2.38/GLIBCXX3.4.32 policy, never silently swapping binaries. ABI requirements are checked by reading native ELF symbol definitions before runtime downloads, without importing PyTorch or installing packages. Full model SHA-256 and the saved header metadata are checked before each launch; this adds sequential disk reads on cold starts.
 
 Downloads retain private `.partial` files and use validated Range resumes; corrupt final files are never silently replaced. Existing deployment names are not overwritten. If a confirmed install fails, uninstall its stopped deployment before retrying; the shared model cache/partial survives, while the per-deployment runtime cache is removed. No automatic disk cleanup or model substitution occurs.
+
+## Retrying an alpha.5 preflight failure
+
+Alpha.5’s upstream CUDA core requires GLIBC2.38/GLIBCXX3.4.32 and cannot start on the reported glibc2.35/GLIBCXX3.4.30 host. No GPU/model work ran in that failure. Do **not** upgrade glibc or add broad host library overrides.
+
+Install alpha.6 with `sh install.sh version` first (install-only), then inspect `modelship status --backend native --name modelship`. If this is still the **stopped, failed** deployment, explicitly remove only that deployment with `modelship uninstall --backend native --name modelship --yes`, then run `modelship launch` again. The shared model cache and owner API keys are retained; its per-deployment runtime cache is removed. Alternatively, choose a new deployment name and retain the failed installation. No existing name is overwritten or migrated automatically.
+
+Runtime enumeration failures now report bounded, terminal-safe native output and retain a private **`runtime-preflight.log`** with exit details. ABI, missing-library, missing-device and timeout failures are distinguished. Installation metadata is saved before the probe, while model downloads still wait for a real enumerated CUDA0. On a CPU-only CI runner, only `libcuda.so.1` may be unresolved for the static ABI audit; **the CLI never accepts a stub/absent driver or CPU fallback**.
 
 ## API and lifecycle
 

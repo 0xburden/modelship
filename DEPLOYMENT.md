@@ -1,6 +1,6 @@
 # Publish and use Modelship
 
-Source repository: **https://github.com/0xburden/modelship** (private initially).
+Source repository: **https://github.com/0xburden/modelship** (public; source license has not yet been selected).
 
 There are two separate servers:
 
@@ -20,7 +20,7 @@ Open the repository's **Actions** tab and confirm the CI workflow is green. It r
 
 The Git repository excludes `bin/`, `dist/`, `.env`/credential files, virtual environments, Python caches, and `validation-artifacts/`. Public model names and sanitized validation summaries are tracked; generated images and machine-readable run artifacts are local only.
 
-The repository starts private. No open-source license has been selected. Choose an appropriate license before deliberately publishing the source. The standalone installer/binary can be served over HTTPS from Dokploy without exposing the private GitHub repo or requiring a GitHub token on inference servers.
+The repository is public after a review of reachable Git history and GitHub descriptions/comments. No open-source license has been selected; visibility does not grant additional usage/redistribution rights. Standalone installer/binary and reviewed runtime release assets are downloadable without a GitHub token on inference servers.
 
 ## 2. Create the release-host application in Dokploy
 
@@ -30,7 +30,7 @@ The repository starts private. No open-source license has been selected. Choose 
 4. Choose the **Dockerfile** build method.
 5. Build context: repository root (`.`).
 6. Dockerfile path: `Dockerfile.releases`.
-7. The tracked **`releases/current`** selects `v0.3.0-alpha.5`. No version build argument is needed. Existing `RELEASE_VERSION` build arguments are ignored with a warning, so an old Dokploy value cannot accidentally relabel the new binary as the previous alpha.
+7. The tracked **`releases/current`** selects `v0.3.0-alpha.6`. No version build argument is needed. Existing `RELEASE_VERSION` build arguments are ignored with a warning, so an old Dokploy value cannot accidentally relabel the new binary as the previous alpha.
 8. Configure a domain, for example `models.YOUR_DOMAIN`, routed to container port **80**.
 9. Point the domain's DNS record at the Dokploy host, enable HTTPS/certificate issuance, then deploy.
 
@@ -40,7 +40,7 @@ The multi-stage Dockerfile compiles the CLI and creates `install.sh` plus `SHA25
 
 Do not publish the same version path with different content. `scripts/build-release-site.sh` checks the existing public version's `SHA256SUMS` and refuses a differing rebuild. Unavailable/unexpected HTTP responses also fail closed. Bump `releases/current` for a new binary or installer; identical rebuilds are allowed.
 
-The image also retains every asset listed in `releases/retained.sha256`, including the old checksum file itself. The retained versions are `v0.2.0-alpha.1`, `v0.3.0-alpha.1`, `v0.3.0-alpha.2`, `v0.3.0-alpha.3` and `v0.3.0-alpha.4`; all three original files for each are downloaded from the live HTTPS host and verified against committed SHA-256 pins before the new image is created. Failed downloads/hash checks fail the build rather than silently dropping an old release. Old URLs remain available after the deployment.
+The image also retains every asset listed in `releases/retained.sha256`, including the old checksum file itself. The retained versions are `v0.2.0-alpha.1`, `v0.3.0-alpha.1`, `v0.3.0-alpha.2`, `v0.3.0-alpha.3`, `v0.3.0-alpha.4` and `v0.3.0-alpha.5`; all three original files for each are downloaded from the live HTTPS host and verified against committed SHA-256 pins before the new image is created. Failed downloads/hash checks fail the build rather than silently dropping an old release. Old URLs remain available after the deployment.
 
 **Operational dependency:** the default archive/immutability-check origin is `https://modelship.bubuntu.xyz`; that host must remain reachable during image builds. Keep independent release backups (the matching GitHub Release assets are one option). For a fresh host/domain migration, provide a trusted HTTPS archive and update this explicit origin deliberately. This is a small release host, not a durable object-store archive. Automatic main deployments may remain enabled, but every subsequent change to binary/installer bytes needs a new tracked release version and retention pins for the preceding version.
 
@@ -51,8 +51,8 @@ After CI is green and you select a version, tag the reviewed commit, for example
 ```sh
 git switch main
 git pull --ff-only
-git tag -a v0.3.0-alpha.5 -m 'Modelship v0.3.0-alpha.5'
-git push origin v0.3.0-alpha.5
+git tag -a v0.3.0-alpha.6 -m 'Modelship v0.3.0-alpha.6'
+git push origin v0.3.0-alpha.6
 ```
 
 Select that tag/commit for the Dokploy build; its `releases/current` must match the tag. This is source versioning; GitHub Release assets are optional and are not automatically published by the current CI workflow.
@@ -62,13 +62,13 @@ Select that tag/commit for the Dokploy build; its `releases/current` must match 
 Replace the host and version with your real values:
 
 ```sh
-export MODELSHIP_RELEASE_BASE=https://modelship.bubuntu.xyz/v0.3.0-alpha.5
+export MODELSHIP_RELEASE_BASE=https://modelship.bubuntu.xyz/v0.3.0-alpha.6
 curl -fI "$MODELSHIP_RELEASE_BASE/install.sh"
 curl -fI "$MODELSHIP_RELEASE_BASE/modelship_linux_amd64"
 curl -fsSL "$MODELSHIP_RELEASE_BASE/SHA256SUMS"
 ```
 
-All three should be reachable without a GitHub login or provider API key. Source can remain private; the release host endpoints are intentionally public. Only expose this static application, not unauthenticated inference APIs.
+All three should be reachable without a GitHub login or provider API key. The source repository and release assets are public; no GitHub token is required for these downloads. Only expose this static application, not unauthenticated inference APIs.
 
 Checksums detect corruption, not a compromised release host. Signed releases and digest-locked build dependencies are future hardening work.
 
@@ -83,7 +83,7 @@ env -u TNR_API_TOKEN tnr connect 0
 Inside the GPU server:
 
 ```sh
-export MODELSHIP_RELEASE_BASE=https://modelship.bubuntu.xyz/v0.3.0-alpha.5
+export MODELSHIP_RELEASE_BASE=https://modelship.bubuntu.xyz/v0.3.0-alpha.6
 curl -fsSL "$MODELSHIP_RELEASE_BASE/install.sh" -o /tmp/modelship-install.sh
 # Review the script from your trusted release before running it.
 # No arguments launches guided setup in a terminal. Use version for install-only.
@@ -93,7 +93,7 @@ modelship version
 modelship doctor --backend native
 ```
 
-`version` should match `releases/current` (`v0.3.0-alpha.5`). The installer verifies SHA256SUMS, atomically installs the binary, and forwards arguments. Use `MODELSHIP_INSTALL_DIR` to test in a different directory if you do not want to replace an existing CLI yet.
+`version` should match `releases/current` (`v0.3.0-alpha.6`). The installer verifies SHA256SUMS, atomically installs the binary, and forwards arguments. Use `MODELSHIP_INSTALL_DIR` to test in a different directory if you do not want to replace an existing CLI yet.
 
 Thunder Base already provides working PyTorch. Python-based native recipes require existing CUDA-enabled PyTorch; the experimental GGUF/llama.cpp adapter does not (see [GGUF.md](GGUF.md)); the bootstrap does not install or replace GPU drivers/PyTorch. Other providers may instead use the Docker backend after installing their supported prerequisites.
 
@@ -119,7 +119,7 @@ modelship deploy Qwen/Qwen2.5-3B-Instruct \
 
 Stop any existing service on that port first. Model repository URLs and IDs are both accepted; gated repositories need an appropriately scoped `HF_TOKEN` and accepted terms on Hugging Face. Never put tokens in the Git repo, release host, or shell command argument values.
 
-Native inference defaults to `127.0.0.1`; use an SSH tunnel for private access. v0.3.0-alpha.5 adds explicit, file-backed bearer auth and `--listen 0.0.0.0` for trusted HTTPS ingress. See README's native authentication section for key generation and stopped-only migration. Never enable public forwarding for an unauthenticated service. These native auth flags are not supported for Docker image/vLLM deployments.
+Native inference defaults to `127.0.0.1`; use an SSH tunnel for private access. v0.3.0-alpha.6 adds explicit, file-backed bearer auth and `--listen 0.0.0.0` for trusted HTTPS ingress. See README's native authentication section for key generation and stopped-only migration. Never enable public forwarding for an unauthenticated service. These native auth flags are not supported for Docker image/vLLM deployments.
 
 ## 6. Remaining milestones
 

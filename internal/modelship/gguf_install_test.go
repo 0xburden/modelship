@@ -214,7 +214,11 @@ func TestGGUFNativeStateBoundaryAndImmutableArtifacts(t *testing.T) {
 	if e = verifyGGUFInstall(cfg, dir); e == nil {
 		t.Fatal("uninstalled runtime accepted")
 	}
-	for _, pin := range llamaArtifacts {
+	runtimeSpec, e := loadLlamaRuntime(llamaLegacyRuntime)
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, pin := range runtimeSpec.Artifacts {
 		if len(pin.SHA256) != 64 || pin.Size < 1 || !strings.Contains(pin.URL, "/b12110/") {
 			t.Fatal("unverified/moving runtime pin")
 		}

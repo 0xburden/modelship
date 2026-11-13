@@ -363,6 +363,10 @@ func (h *Hub) inspectGGUF(ctx context.Context, m *Model, file string) error {
 	if e != nil {
 		return e
 	}
-	m.GGUF = &GGUFSpec{File: pin, Metadata: meta, Runtime: "llama-b12110-cuda12.8"}
+	runtimeSpec, e := loadLlamaRuntime("")
+	if e != nil {
+		return e
+	}
+	m.GGUF = &GGUFSpec{File: pin, Metadata: meta, Runtime: runtimeSpec.ID}
 	return nil
 }
