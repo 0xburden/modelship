@@ -23,6 +23,8 @@ var errWizardCanceled = errors.New("setup canceled; no deployment or API key was
 // Only the UI is new: inspection, policy/fit planning and deployment stay shared
 // with the existing automation commands. Tests replace side-effect boundaries.
 type wizardDeps struct {
+	gguf func(context.Context, *Model, string) error
+
 	inspect    func(context.Context, string, string) (Model, error)
 	detect     func(context.Context, string) (Host, error)
 	cache      func(*Host, Model)
@@ -35,7 +37,11 @@ type wizardDeps struct {
 
 func defaultWizardDeps() wizardDeps {
 	exe, _ := os.Executable()
-	return wizardDeps{inspect: inspectForPlan, detect: DetectForBackend, cache: InspectModelCache, build: BuildPlan, probe: probeTorch,
+	return wizardDeps{gguf: func(ctx context.Context, m *Model, file string) error {
+		hub := NewHub()
+		hub.Token = os.Getenv("HF_TOKEN")
+		return hub.inspectGGUF(ctx, m, file)
+	}, inspect: inspectForPlan, detect: DetectForBackend, cache: InspectModelCache, build: BuildPlan, probe: probeTorch,
 		createKey: func(path string) error { _, err := generateAPIKey(path); return err }, deploy: Deploy, executable: exe}
 }
 func launchCommand(ctx context.Context, args []string) error {
@@ -277,6 +283,9 @@ func runWizard(ctx context.Context, input io.Reader, output io.Writer, d wizardD
 		}
 	}
 	defaultRevision := "main"
+	if selected == ggufRepo {
+		defaultRevision = ggufRevision
+	}
 	catalog, err := LoadRecipes()
 	if err != nil {
 		return err
@@ -288,6 +297,8 @@ func runWizard(ctx context.Context, input io.Reader, output io.Writer, d wizardD
 	}
 	if defaultRevision == "main" {
 		w.explain("Upstream branch default", "main means the repository's current upstream branch, not a fixed or locally tested version. It is resolved once now; review/deployment use the exact pinned commit SHA.")
+	} else if selected == ggufRepo {
+		w.explain("GGUF artifact pin", "This first GGUF adapter uses a reviewed immutable artifact manifest; another revision or file is not silently substituted.")
 	} else {
 		w.explain("Reviewed recipe pin", "This custom-code recipe defaults to its reviewed immutable commit, not the latest upstream branch. Source-code approval is still separate.")
 	}
@@ -318,6 +329,20 @@ func runWizard(ctx context.Context, input io.Reader, output io.Writer, d wizardD
 	if recipe.Status == "planned" {
 		return fmt.Errorf("recipe %s is recognized but not deployable: %s", recipe.ID, strings.Join(recipe.Blockers, "; "))
 	}
+	ggufFile := ""
+	if recipe.Format == "gguf" {
+		fmt.Fprintf(output, "Experimental GGUF: only %s (16.56 GB) is approved in this first text-only adapter. No mmproj, MTP, imatrix or other quant is selected automatically.\n", ggufFilename)
+		ggufFile, err = w.ask("GGUF filename (explicit selection required)", "", func(value string) error { _, e := ggufTarget(selected, model.Hub.SHA, value); return e })
+		if err != nil {
+			return err
+		}
+		if d.gguf == nil {
+			return fmt.Errorf("GGUF header inspector unavailable")
+		}
+		if err = d.gguf(ctx, &model, ggufFile); err != nil {
+			return err
+		}
+	}
 	fmt.Fprintf(output, "Resolved: %s @ %s\nRecipe: %s (%s), %s\n", model.Hub.ID, model.Hub.SHA, recipe.ID, recipe.Status, recipe.DType)
 	// Remote card text is untrusted terminal data; quote rather than emit escapes.
 	license, _ := json.Marshal(model.Hub.CardData.License)
@@ -332,12 +357,17 @@ func runWizard(ctx context.Context, input io.Reader, output io.Writer, d wizardD
 	if contains(recipe.Backends, "native") {
 		backendDefault = "native"
 	}
-	w.explain("Recipe-controlled setting", "Default compute dtype is "+recipe.DType+" for this adapter (component overrides may apply); this is not an auto-fit selection. No automatic quantization or CPU offload is enabled.")
-	fmt.Fprintln(output, "Native uses existing working CUDA PyTorch without replacing it. Docker requires your provider's supported local GPU runtime.")
-	if backendDefault == "native" {
-		w.explain("Recommended backend", "native is the preset because this recipe supports it—not because Python/PyTorch has already been verified. The CUDA preflight checks that later.")
+	if recipe.Format == "gguf" {
+		w.explain("Pinned format", "The selected GGUF contains mixed encoded tensor types; this is not a global compute dtype or automatic quantization choice. Full GPU layer placement is explicit; CPU offload is not a fallback.")
+		w.explain("Standalone native backend", "This adapter uses pinned llama.cpp CUDA12.8, not Python/PyTorch. Runtime checksum/device verification happens after approval and before model download; no host packages or drivers are changed.")
 	} else {
-		w.explain("Recipe default", "Backend choices come from this adapter's supported paths, not automatic proof that the host runtime is configured.")
+		w.explain("Recipe-controlled setting", "Default compute dtype is "+recipe.DType+" for this adapter (component overrides may apply); this is not an auto-fit selection. No automatic quantization or CPU offload is enabled.")
+		fmt.Fprintln(output, "Native uses existing working CUDA PyTorch without replacing it. Docker requires your provider's supported local GPU runtime.")
+		if backendDefault == "native" {
+			w.explain("Recommended backend", "native is the preset because this recipe supports it—not because Python/PyTorch has already been verified. The CUDA preflight checks that later.")
+		} else {
+			w.explain("Recipe default", "Backend choices come from this adapter's supported paths, not automatic proof that the host runtime is configured.")
+		}
 	}
 	backend, err := w.choose("Backend", recipe.Backends, backendDefault)
 	if err != nil {
@@ -364,7 +394,7 @@ func runWizard(ctx context.Context, input io.Reader, output io.Writer, d wizardD
 		return err
 	}
 	index, _ := strconv.Atoi(gpu)
-	o := Options{Backend: backend, Revision: model.Hub.SHA, GPU: index, GPUMode: "auto", Python: "python3", Context: 4096}
+	o := Options{GGUFFile: ggufFile, Backend: backend, Revision: model.Hub.SHA, GPU: index, GPUMode: "auto", Python: "python3", Context: 4096}
 	taskDefault := recipe.Tasks[0]
 	if contains(recipe.Tasks, model.Hub.PipelineTag) {
 		taskDefault = model.Hub.PipelineTag
@@ -399,22 +429,31 @@ func runWizard(ctx context.Context, input io.Reader, output io.Writer, d wizardD
 	}
 	if o.Task == "text-generation" {
 		w.explain("Conservative preset", wizardContextHint(model))
-		o.Context, err = w.integer("Context window (tokens)", 4096, 128, 131072)
+		contextCap := 131072
+		if recipe.Format == "gguf" {
+			contextCap = 32768
+		}
+		o.Context, err = w.integer("Context window (tokens)", 4096, 128, contextCap)
 		if err != nil {
 			return err
 		}
 	}
 	createKey := false
 	if backend == "native" {
-		w.explain("PATH preset", "python3 is a command name, not a detected CUDA environment. Choose the interpreter that already has working CUDA PyTorch; Modelship checks it and never installs/replaces host PyTorch or drivers.")
-		o.Python, err = w.ask("Existing CUDA Python executable", "python3", func(v string) error {
-			if v == "" {
-				return fmt.Errorf("Enter a Python executable or path")
+		if recipe.Format != "gguf" {
+			w.explain("PATH preset", "python3 is a command name, not a detected CUDA environment. Choose the interpreter that already has working CUDA PyTorch; Modelship checks it and never installs/replaces host PyTorch or drivers.")
+			o.Python, err = w.ask("Existing CUDA Python executable", "python3", func(v string) error {
+				if v == "" {
+					return fmt.Errorf("Enter a Python executable or path")
+				}
+				return nil
+			})
+			if err != nil {
+				return err
 			}
-			return nil
-		})
-		if err != nil {
-			return err
+		} else {
+			o.Python = ""
+			w.explain("Standalone runtime", "This GGUF adapter uses a separately verified llama.cpp CUDA build. Python/PyTorch are not required, installed or changed; CUDA runtime verification happens after approval, before model download.")
 		}
 		createKey, err = w.access(&o)
 		if err != nil {
@@ -521,7 +560,7 @@ func runWizard(ctx context.Context, input io.Reader, output io.Writer, d wizardD
 		writePlan(output, plan)
 		return fmt.Errorf("deployment blocked; no key/install/deployment was created — resolve the hard blockers first")
 	}
-	if backend == "native" {
+	if backend == "native" && recipe.Format != "gguf" {
 		fmt.Fprintln(output, "Checking existing Python/PyTorch with a small CUDA preflight (no packages installed)...")
 		info, e := d.probe(ctx, o.Python, plan)
 		if e != nil {
@@ -582,6 +621,9 @@ func runWizard(ctx context.Context, input io.Reader, output io.Writer, d wizardD
 // Match the planner's top-level/nested context source. Advertised model context
 // is metadata, not a measured VRAM-fit or quality guarantee; defaults stay put.
 func wizardContextHint(model Model) string {
+	if model.GGUF != nil {
+		return fmt.Sprintf("4096-token preset, not the model maximum. This first GGUF adapter accepts 128–32768; header advertises %d. Quantized weights do not eliminate KV/recurrent-state or activation memory. No automatic context shrinking or CPU fallback.", model.GGUF.Metadata.Context)
+	}
 	config := model.Config
 	if config.TextConfig != nil {
 		config = *config.TextConfig
@@ -611,8 +653,14 @@ func wizardCommand(exe, requested, weights string, o Options, p Plan, wait time.
 	if weights != "" {
 		args = append(args, "--weights-repo", weights)
 	}
+	if o.GGUFFile != "" {
+		args = append(args, "--gguf-file", o.GGUFFile)
+	}
 	if o.Backend == "native" {
-		args = append(args, "--python", o.Python, "--listen", nativeListen(p))
+		if p.GGUF == nil {
+			args = append(args, "--python", o.Python)
+		}
+		args = append(args, "--listen", nativeListen(p))
 		if p.APIKeyFile != "" {
 			args = append(args, "--api-key-file", p.APIKeyFile)
 		}

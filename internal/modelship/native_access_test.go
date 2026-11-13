@@ -188,7 +188,7 @@ func TestConfigureUpgradesOnlyAccessAndRejectsLegacyPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Schema != 4 || got.Plan.Listen != listen || got.Plan.APIKeyFile != key {
+	if got.Schema != nativeSchemaVersion || got.Plan.Listen != listen || got.Plan.APIKeyFile != key {
 		t.Fatal("access upgrade missing")
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "server.py"))

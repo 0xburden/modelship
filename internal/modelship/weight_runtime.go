@@ -34,6 +34,9 @@ func verifyWeightFit(p Plan, gpus []GPU) error {
 		if p.WeightResidentBytes%(1024*1024) != 0 {
 			need++
 		}
+		if p.GGUF != nil && (need > gpu.TotalMiB || need > gpu.FreeMiB) {
+			return fmt.Errorf("GGUF saved weight-placement budget requires %d MiB, exceeding total/currently free GPU VRAM; --allow-risk cannot override", need)
+		}
 		if need > gpu.TotalMiB {
 			return fmt.Errorf("weights alone require at least %d MiB, exceeding selected GPU total VRAM (%d MiB); re-plan on a larger GPU; --allow-risk cannot override", need, gpu.TotalMiB)
 		}

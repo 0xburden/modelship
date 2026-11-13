@@ -18,6 +18,10 @@ type WeightGroup struct {
 	UnknownSizes int    `json:"unknown_sizes,omitempty"`
 }
 type Inspection struct {
+	SelectedWeightBytes int64 `json:"selected_weight_bytes,omitempty"`
+
+	GGUF *GGUFSpec `json:"gguf,omitempty"`
+
 	Model                 string        `json:"model"`
 	Revision              string        `json:"revision"`
 	Task                  string        `json:"repository_task"`
@@ -37,7 +41,11 @@ type Inspection struct {
 }
 
 func inspectModel(m Model) (Inspection, error) {
-	report := Inspection{Model: m.Hub.ID, Revision: m.Hub.SHA, Task: m.Hub.PipelineTag, Library: m.Hub.Library, Gated: m.Hub.Gated, License: m.Hub.CardData.License, SourceConfig: m.SourceConfig, ConfigurationReadable: m.SourceConfig != "" && len(m.InspectionWarnings) == 0, Architectures: m.Config.Architectures, Pipeline: m.Index.Class, TextConfig: m.Config.TextConfig, RecipeStatus: "unsupported"}
+	report := Inspection{GGUF: m.GGUF, Model: m.Hub.ID, Revision: m.Hub.SHA, Task: m.Hub.PipelineTag, Library: m.Hub.Library, Gated: m.Hub.Gated, License: m.Hub.CardData.License, SourceConfig: m.SourceConfig, ConfigurationReadable: m.SourceConfig != "" && len(m.InspectionWarnings) == 0, Architectures: m.Config.Architectures, Pipeline: m.Index.Class, TextConfig: m.Config.TextConfig, RecipeStatus: "unsupported"}
+	if m.GGUF != nil {
+		report.SelectedWeightBytes = m.GGUF.File.Size
+		report.Warnings = append(report.Warnings, "Repository artifact totals include other quantizations and auxiliaries; deployment selects only the explicitly chosen GGUF file, not every listed artifact.")
+	}
 	report.Warnings = append(report.Warnings, m.InspectionWarnings...)
 	groups := map[string]*WeightGroup{}
 	for _, file := range m.Hub.Siblings {
@@ -92,6 +100,7 @@ func inspectModel(m Model) (Inspection, error) {
 }
 func inspectCommand(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("inspect", flag.ContinueOnError)
+	ggufFile := fs.String("gguf-file", "", "inspect a selected approved GGUF header without tensor payloads")
 	revision := fs.String("revision", "main", "Hugging Face revision")
 	asJSON := fs.Bool("json", false, "structured inspection")
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
@@ -113,6 +122,11 @@ func inspectCommand(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if *ggufFile != "" {
+		if err = hub.inspectGGUF(ctx, &m, *ggufFile); err != nil {
+			return err
+		}
+	}
 	report, err := inspectModel(m)
 	if err != nil {
 		return err
@@ -121,6 +135,9 @@ func inspectCommand(ctx context.Context, args []string) error {
 		return printJSON(report)
 	}
 	fmt.Printf("Model:       %s\nRevision:    %s\nRepo task:   %s\nArchitecture:%v\nPipeline:    %s\nRecipe:      %s\nWeight files: %.2f GiB across listed artifacts\n", report.Model, report.Revision, report.Task, report.Architectures, report.Pipeline, report.RecipeStatus, float64(report.WeightArtifactBytes)/(1024*1024*1024))
+	if report.GGUF != nil {
+		fmt.Printf("Selected GGUF: %s · %.2f GiB; %d tensors, %d encoded tensor bytes\n", report.GGUF.File.Name, float64(report.SelectedWeightBytes)/(1<<30), report.GGUF.Metadata.TensorCount, report.GGUF.Metadata.TensorBytes)
+	}
 	if report.Recipe != nil {
 		r := report.Recipe
 		fmt.Printf("Recipe ID:   %s\nBackends:    %s\nAPI tasks:   %s\n", r.ID, strings.Join(r.Backends, ", "), strings.Join(r.Tasks, ", "))

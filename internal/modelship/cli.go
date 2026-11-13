@@ -20,7 +20,7 @@ const help = `modelship — NVIDIA model deployment (Linux amd64)
 Commands:
   launch                             Guided model setup (also the interactive default)
   catalog [--json]                    List implemented, experimental, and planned recipes
-  inspect MODEL [--json]              Inspect metadata without a GPU or model download
+  inspect MODEL [--gguf-file FILE] [--json]              Inspect metadata without a GPU or model download
   doctor                             Inspect NVIDIA GPUs and Docker
   setup                              Print prerequisite installation guidance
   plan MODEL [options]               Resolve weights and print a deployment plan
@@ -37,11 +37,12 @@ MODEL is org/repo or https://huggingface.co/org/repo.
 Plan/deploy options:
   --task auto|text-generation|text-to-image|image-to-image|text-to-video
   --revision main   --gpu 0   --context 4096   --port 8000
-  --backend docker|native   --python python3 (native base with working PyTorch)
+  --backend docker|native   --python python3 (Python-based native recipes; GGUF uses llama.cpp)
   --listen 127.0.0.1|0.0.0.0 --api-key-file PATH (native only; public binds require auth)
   --experimental     Explicitly opt in to an experimental implemented recipe
   --research         Acknowledge non-commercial research/evaluation use (Qwen Image)
   --trust-model-code Explicit approval of the pinned, hash-verified MOSS Python code
+  --gguf-file FILE  Explicit GGUF variant; no automatic selection or conversion
   --weights-repo ID  Explicit official WAN Diffusers conversion; never inferred
   --name modelship  --allow-risk   --gpu-mode auto|nvidia|cdi (Docker)
   --json            Print machine-readable plan (plan only)
@@ -52,7 +53,7 @@ Use HF_TOKEN for gated/private models (separate from API auth). Native defaults 
 Docker publishes localhost ports subject to the provider's network isolation.
 No driver installation, automatic repository-code execution, unsafe checkpoint
 loading, arbitrary model conversion, or automatic public exposure. Safetensors
-headers check weights-alone VRAM; activation/cache estimates are still heuristics.
+and selected GGUF headers check weight-placement budgets; activation/cache estimates are still heuristics.
 `
 
 func Run(args []string, version string) error {
@@ -76,7 +77,7 @@ func Run(args []string, version string) error {
 		if len(args) != 3 {
 			return fmt.Errorf("internal native-run requires name and run ID")
 		}
-		return NativeExec(args[1], args[2])
+		return NativeExec(ctx, args[1], args[2])
 	case "auth-keygen":
 		return authKeygenCommand(args[1:])
 	case "configure":
@@ -161,6 +162,7 @@ func planCommand(ctx context.Context, action string, args []string) error {
 	fs := flag.NewFlagSet(action, flag.ContinueOnError)
 	o := Options{}
 	fs.StringVar(&o.Backend, "backend", "docker", "docker or native")
+	fs.StringVar(&o.GGUFFile, "gguf-file", "", "explicit approved standalone GGUF filename (native experimental only)")
 	fs.StringVar(&o.Listen, "listen", "", "native IPv4 listener (default 127.0.0.1); 0.0.0.0 requires --api-key-file")
 	fs.StringVar(&o.APIKeyFile, "api-key-file", "", "private bearer key file; never a literal key value")
 	fs.StringVar(&o.Python, "python", "python3", "native base Python with working CUDA PyTorch")
@@ -226,6 +228,13 @@ func planCommand(ctx context.Context, action string, args []string) error {
 	if err != nil {
 		return err
 	}
+	if o.GGUFFile != "" {
+		hub := NewHub()
+		hub.Token = os.Getenv("HF_TOKEN")
+		if err = hub.inspectGGUF(ctx, &model, o.GGUFFile); err != nil {
+			return err
+		}
+	}
 	if o.Backend == "native" {
 		InspectModelCache(&host, model)
 	}
@@ -280,6 +289,9 @@ func writePlan(w io.Writer, p Plan) {
 	if p.ModelCacheDir != "" {
 		fmt.Fprintf(w, "Model cache: %s\n", p.ModelCacheDir)
 	}
+	if p.GGUF != nil {
+		fmt.Fprintf(w, "GGUF file:   %s (%d bytes); SHA-256 %s\nRuntime pin: %s; CUDA0/all GPU layers; auto-fit disabled; text-only\n", p.GGUF.File.Name, p.GGUF.File.Size, p.GGUF.File.SHA256, p.GGUF.Runtime)
+	}
 	if p.Context > 0 {
 		fmt.Fprintf(w, "Context:     %d tokens\n", p.Context)
 	}
@@ -329,6 +341,8 @@ func inspectForPlan(ctx context.Context, id, revision string) (Model, error) {
 		return model, err
 	}
 	// Record errors as non-overridable blockers rather than silently guessing.
-	_ = hub.InspectWeightMetadata(ctx, &model)
+	if !ggufOnly(model) {
+		_ = hub.InspectWeightMetadata(ctx, &model)
+	}
 	return model, nil
 }

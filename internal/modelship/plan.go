@@ -11,6 +11,8 @@ const VLLMImage = "vllm/vllm-openai:v0.10.2"
 const ImageRuntime = "modelship-diffusers:0.1.0"
 
 type Options struct {
+	GGUFFile string
+
 	Listen         string
 	APIKeyFile     string
 	Backend        string
@@ -28,6 +30,8 @@ type Options struct {
 	TrustModelCode bool
 }
 type Plan struct {
+	GGUF *GGUFSpec `json:"gguf,omitempty"`
+
 	Listen              string            `json:"listen,omitempty"`
 	APIKeyFile          string            `json:"api_key_file,omitempty"`
 	Schema              int               `json:"schema"`
@@ -85,6 +89,9 @@ func BuildPlan(m Model, h Host, o Options) (Plan, error) {
 	o.Backend = backend
 	if err := accessOptions(&o); err != nil {
 		return Plan{}, err
+	}
+	if ggufOnly(m) || o.GGUFFile != "" || m.GGUF != nil {
+		return buildGGUFPlan(m, h, o)
 	}
 	p := Plan{Backend: backend, Schema: 1, Model: m.Hub.ID, Revision: m.Hub.SHA, License: m.Hub.CardData.License, Port: o.Port, Name: o.Name, GPUMode: o.GPUMode, GPUCount: len(h.GPUs)}
 	p.Listen, p.APIKeyFile = o.Listen, o.APIKeyFile

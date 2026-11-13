@@ -10,6 +10,8 @@ import (
 )
 
 type Recipe struct {
+	Format string `json:"format,omitempty"`
+
 	ID                  string            `json:"id"`
 	Name                string            `json:"name"`
 	Kind                string            `json:"kind"`
@@ -76,7 +78,14 @@ func LoadRecipes() (RecipeCatalog, error) {
 		if len(r.Repositories)+len(r.Architectures)+len(r.Pipelines) == 0 || len(r.Tasks) == 0 || len(r.Backends) == 0 {
 			return catalog, fmt.Errorf("recipe %s has no match/task/backend", r.ID)
 		}
-		if r.Status != "planned" {
+		if r.Format != "" && r.Format != "gguf" {
+			return catalog, fmt.Errorf("invalid recipe format")
+		}
+		if r.Format == "gguf" {
+			if r.ID != "qwen35-gguf-text" || r.NativeLoader != "llama.cpp" || r.DType != "gguf" || len(r.Repositories) != 1 || r.Repositories[0] != ggufRepo || len(r.NativeRequirements) != 0 || len(r.Backends) != 1 || r.Backends[0] != "native" {
+				return catalog, fmt.Errorf("invalid GGUF recipe")
+			}
+		} else if r.Status != "planned" {
 			if r.NativeLoader == "" || len(r.NativeRequirements) == 0 {
 				return catalog, fmt.Errorf("executable recipe %s lacks safe native configuration", r.ID)
 			}
@@ -114,16 +123,24 @@ func findRecipe(m Model) (Recipe, bool, error) {
 	if err != nil {
 		return Recipe{}, false, err
 	}
+	if ggufOnly(m) || m.GGUF != nil {
+		for _, r := range catalog.Recipes {
+			if r.Format == "gguf" && contains(r.Repositories, m.Hub.ID) {
+				return r, true, nil
+			}
+		}
+		return Recipe{}, false, nil
+	}
 	// Exact repositories also identify unusual native layouts such as WAN.
 	for _, r := range catalog.Recipes {
-		if contains(r.Repositories, m.Hub.ID) {
+		if r.Format != "gguf" && contains(r.Repositories, m.Hub.ID) {
 			return r, true, nil
 		}
 	}
 	for _, r := range catalog.Recipes {
 		// These execution paths deliberately accept only the reviewed official
 		// repository, not arbitrary pipelines with the same class name.
-		if r.NativeLoader == "moss-image" || r.NativeLoader == "wan-pipeline" {
+		if r.Format == "gguf" || r.NativeLoader == "moss-image" || r.NativeLoader == "wan-pipeline" {
 			continue
 		}
 		if m.Index.Class != "" && contains(r.Pipelines, m.Index.Class) {
@@ -136,6 +153,10 @@ func findRecipe(m Model) (Recipe, bool, error) {
 	return Recipe{}, false, nil
 }
 func validateRecipeShape(r Recipe, m Model) error {
+	if r.Format == "gguf" {
+		_, err := ggufTarget(m.Hub.ID, m.Hub.SHA, ggufFilename)
+		return err
+	}
 	if len(r.Pipelines) > 0 && !contains(r.Pipelines, m.Index.Class) {
 		return fmt.Errorf("repository pipeline %q does not match recipe %s", m.Index.Class, r.ID)
 	}
