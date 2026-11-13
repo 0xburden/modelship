@@ -1,4 +1,4 @@
-> **Unreleased PyTorch vision work:** opt-in Gemma 4 image understanding is implemented on a separate branch, with CPU/real-PIL-processor checks only. It is **not in published alpha.7**. See [PYTORCH_VISION.md](PYTORCH_VISION.md); real GPU image inference remains pending user testing. Existing GGUF validation is unchanged.
+> **v0.3.0-alpha.8:** opt-in Gemma 4 PyTorch image understanding is implemented, with CPU/real-PIL-processor checks only. It is **not in published alpha.7**. See [PYTORCH_VISION.md](PYTORCH_VISION.md); real GPU image inference remains pending user testing. Existing GGUF validation is unchanged.
 
 > **v0.3.0-alpha.7:** reviewed GGUF quant menus (UD-Q4_K_M default), optional one-image vision, and Esc-back navigation are described in [GGUF.md](GGUF.md). Published **alpha.6 remains unchanged/text-only**. GGUF image understanding is **user-validated on a real GPU** (2026-11-13); quantization-wide coverage and peak memory are not established.
 
@@ -20,7 +20,7 @@ curl -fsSL https://modelship.bubuntu.xyz/latest/install.sh -o install.sh
 sh install.sh
 ```
 
-`/latest/install.sh` is a non-cacheable moving entry point, copied from the version selected by `releases/current`. The downloaded script still pins an immutable version for both the binary and checksums, so an update during installation cannot mix releases. For reproducible installs, use a versioned URL such as `https://modelship.bubuntu.xyz/v0.3.0-alpha.7/install.sh`. No `/latest` binary/checksum aliases are needed.
+`/latest/install.sh` is a non-cacheable moving entry point, copied from the version selected by `releases/current`. The downloaded script still pins an immutable version for both the binary and checksums, so an update during installation cannot mix releases. For reproducible installs, use a versioned URL such as `https://modelship.bubuntu.xyz/v0.3.0-alpha.8/install.sh`. No `/latest` binary/checksum aliases are needed.
 
 The published installer knows its immutable release URL; **no environment variable or model flags are needed**. It verifies/installs the CLI first, then launches guided setup when stdin/stdout are terminals. You can also run `~/.local/bin/modelship launch`, or simply `modelship` from a terminal after adding `~/.local/bin` to PATH.
 
@@ -44,7 +44,7 @@ This first iteration does not add new model adapters, capability-driven generati
 - Text: unquantized **safetensors** repositories with explicitly recognized architectures: Llama, Mistral, Qwen2, Qwen3, Gemma, Gemma2, Phi3 causal LMs. Exact architecture names and dependency profiles are in `internal/modelship/assets/recipes.json`.
 - Images: standard Diffusers repositories whose `model_index.json` declares **StableDiffusionPipeline**, **StableDiffusionXLPipeline**, or **FluxPipeline**. Both text-to-image and image-to-image are selectable; a deployment serves **one task**.
 - Text requires compute capability >=7.5 in Docker / >=7.0 natively; SD/SDXL >=7.0; FLUX >=8.0 (bfloat16).
-- **Experimental/native:** Gemma 4 and Qwen3.8 text by default (unreleased explicit Gemma image profile documented above); Qwen Image 2.1 generation/editing; explicitly approved/hash-pinned MOSS images; bounded WAN video via an explicitly selected official Diffusers conversion. These need `--experimental` and model-specific resource/license/code prerequisites. See [MODEL_SUPPORT.md](MODEL_SUPPORT.md) for validation status; unvalidated adapters are not GPU-support guarantees.
+- **Experimental/native:** Gemma 4 and Qwen3.8 text by default (explicit Gemma image profile from alpha.8 documented above); Qwen Image 2.1 generation/editing; explicitly approved/hash-pinned MOSS images; bounded WAN video via an explicitly selected official Diffusers conversion. These need `--experimental` and model-specific resource/license/code prerequisites. See [MODEL_SUPPORT.md](MODEL_SUPPORT.md) for validation status; unvalidated adapters are not GPU-support guarantees.
 
 Not yet supported: general GGUF (only the pinned experimental text profile above), single-file image checkpoints, variant-only image repositories, adapters/LoRAs, AWQ/GPTQ/bitsandbytes, arbitrary remote model code, original WAN PTH checkpoints, FLUX.2, multi-GPU sharding, automatic quantization/offload, or arbitrary model architectures. Matching an architecture is a compatibility filter, **not** proof that every repository variant will load.
 

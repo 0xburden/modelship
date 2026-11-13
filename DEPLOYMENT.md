@@ -30,7 +30,7 @@ The repository is public after a review of reachable Git history and GitHub desc
 4. Choose the **Dockerfile** build method.
 5. Build context: repository root (`.`).
 6. Dockerfile path: `Dockerfile.releases`.
-7. The tracked **`releases/current`** selects `v0.3.0-alpha.7`. No version build argument is needed. Existing `RELEASE_VERSION` build arguments are ignored with a warning, so an old Dokploy value cannot accidentally relabel the new binary as the previous alpha.
+7. The tracked **`releases/current`** selects `v0.3.0-alpha.8`. No version build argument is needed. Existing `RELEASE_VERSION` build arguments are ignored with a warning, so an old Dokploy value cannot accidentally relabel the new binary as the previous alpha.
 8. Configure a domain, for example `models.YOUR_DOMAIN`, routed to container port **80**.
 9. Point the domain's DNS record at the Dokploy host, enable HTTPS/certificate issuance, then deploy.
 

@@ -1,6 +1,6 @@
-# Gemma PyTorch image understanding — unreleased feature branch
+# Gemma PyTorch image understanding — v0.3.0-alpha.8
 
-**Published alpha.7 still has text-only PyTorch chat.** This branch adds explicit image input for the already text-validated Gemma checkpoint. It is not merged/released and must receive a fresh release version and complete alpha.7 retention pins before any approved publication. The working GGUF vision path and its user-confirmed real-GPU validation are separate and unchanged.
+**Published alpha.7 still has text-only PyTorch chat.** Alpha.8 adds explicit image input for the already text-validated Gemma checkpoint, with alpha.7 assets retained byte-for-byte. The working GGUF vision path and its user-confirmed real-GPU validation are separate and unchanged.
 
 ## Initial reviewed profile
 
@@ -16,7 +16,7 @@ This first profile does **not** infer vision support for every Gemma architectur
 
 ## Explicit opt-in, same deployment plan
 
-With a feature build (not published alpha.7):
+With v0.3.0-alpha.8 or newer:
 
 ```sh
 modelship plan google/gemma-4-E4B-it \
