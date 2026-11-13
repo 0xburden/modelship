@@ -92,7 +92,7 @@ func TestGGUFPreflightScrubsEnvironmentAndTerminalControls(t *testing.T) {
 	}
 }
 func TestGGUFPreflightBoundsOutputAndRetainsSuccessReport(t *testing.T) {
-	cfg, dir := probeFixture(t, `echo 'Available devices: CUDA0: fixture GPU'`)
+	cfg, dir := probeFixture(t, `printf 'Available devices:\n  CUDA0: fixture GPU (81920 MiB, 80000 MiB free)\n'`)
 	if e := probeLlamaCUDA(context.Background(), cfg, dir); e != nil {
 		t.Fatal(e)
 	}
@@ -115,5 +115,16 @@ func TestGGUFPreflightBoundsOutputAndRetainsSuccessReport(t *testing.T) {
 	got, _ := os.ReadFile(filepath.Join(dir, "untouched"))
 	if string(got) != "preserved" {
 		t.Fatal("diagnostic write followed a symlink")
+	}
+}
+
+func TestGGUFPreflightDoesNotAcceptCUDAErrorAsDevice(t *testing.T) {
+	for _, line := range []string{"CUDA0 initialization failed", "Available devices:\n(none)\nCUDA0: failed", "Available devices:\nCPU: x (10 MiB, 9 MiB free)"} {
+		if reportsCUDA0(line) {
+			t.Fatal("false CUDA device positive", line)
+		}
+	}
+	if !reportsCUDA0("CUDA init logs\nAvailable devices:\n  CUDA0: NVIDIA A100 (81920 MiB, 80000 MiB free)\n") {
+		t.Fatal("real device listing not recognized")
 	}
 }

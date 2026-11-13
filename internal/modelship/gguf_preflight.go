@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +38,23 @@ func diagnosticText(raw string) string {
 		lines[i] = terminalText(lines[i])
 	}
 	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+var cudaDeviceLine = regexp.MustCompile(`^CUDA0: .+ \([0-9]+ MiB, [0-9]+ MiB free\)$`)
+
+func reportsCUDA0(raw string) bool {
+	inList := false
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "Available devices:" {
+			inList = true
+			continue
+		}
+		if inList && cudaDeviceLine.MatchString(line) {
+			return true
+		}
+	}
+	return false
 }
 func probeLlamaCUDA(ctx context.Context, cfg NativeConfig, dir string) error {
 	return probeLlamaCUDAWithin(ctx, cfg, dir, 60*time.Second)
@@ -79,7 +97,7 @@ func probeLlamaCUDAWithin(ctx context.Context, cfg NativeConfig, dir string, tim
 			logErr = os.Rename(tmp, log)
 		}
 	}
-	if e == nil && strings.Contains(message, "CUDA0") {
+	if e == nil && reportsCUDA0(output.data.String()) {
 		if logErr != nil {
 			return fmt.Errorf("CUDA enumeration passed but private preflight diagnostics could not be saved")
 		}
