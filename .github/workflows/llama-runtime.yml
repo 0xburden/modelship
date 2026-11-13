@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: llama-runtime-${{ github.ref }}
+  group: llama-runtime-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: true
 jobs:
   build:
@@ -50,7 +50,7 @@ jobs:
           tail -n 1 runtime-out/evidence/abi.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: llama-b12110-ubuntu22.04-cuda12.8-r1
+          name: llama-b12110-ubuntu22.04-cuda12.8-sm80-ptx-r1
           path: runtime-out/
           compression-level: 0
           retention-days: 7

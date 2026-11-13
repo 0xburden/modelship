@@ -13,16 +13,18 @@ RUN --network=none mkdir llama cccl cmake && \
     gcc --version && g++ --version && /usr/local/cuda/bin/nvcc --version && \
     /src/cmake/bin/cmake --version
 # No apt, pip, fetched UI, BoringSSL, native-CPU tuning or unpinned CMake fetches.
-# Real Ampere/Ada cubins + Hopper PTX + architecture-specific Blackwell cubin.
+# Ampere SM80 cubin + compute80 PTX baseline. Higher SMs can JIT the PTX;
+# optimized per-generation cubins must not delay a host-ABI compatibility fix.
 RUN --network=none /src/cmake/bin/cmake -S /src/llama -B /src/build \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=/usr/bin/gcc -DCMAKE_CXX_COMPILER=/usr/bin/g++ \
     -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/g++ \
-    '-DCMAKE_CUDA_ARCHITECTURES=80-real;86-real;89-real;90-virtual;120a-real' \
+    '-DCMAKE_CUDA_ARCHITECTURES=80' \
     '-DCMAKE_INSTALL_RPATH=$ORIGIN' -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
     -DFETCHCONTENT_FULLY_DISCONNECTED=ON -DFETCHCONTENT_SOURCE_DIR_CCCL=/src/cccl \
     -DLLAMA_BUILD_NUMBER=12110 -DLLAMA_BUILD_COMMIT=cd959bae99ff4bed22bef2604f45241c09bbb8c8 \
     -DGGML_CUDA=ON -DGGML_CUDA_CCCL_VERSION=v3.4.3 -DGGML_CUDA_NCCL=OFF \
-    -DGGML_BACKEND_DL=ON -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON -DGGML_OPENMP=OFF \
+    -DGGML_BACKEND_DL=ON -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=OFF -DGGML_OPENMP=OFF \
+    -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF -DGGML_SSE42=ON \
     -DLLAMA_OPENSSL=OFF -DLLAMA_BUILD_BORINGSSL=OFF -DLLAMA_CONNECT=OFF \
     -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF -DLLAMA_SUBPROCESS=OFF \
     -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TOOLS=ON \
