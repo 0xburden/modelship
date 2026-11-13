@@ -94,12 +94,17 @@ func validateRuntimeABI(have, need runtimeABI) error {
 	}
 	return nil
 }
-func checkLlamaRuntimeABI() error {
+func checkLlamaRuntimeABI(p Plan) error {
+	if p.GGUF == nil {
+		return fmt.Errorf("missing GGUF runtime specification")
+	}
+	spec, e := loadLlamaRuntime(p.GGUF.Runtime)
+	if e != nil {
+		return e
+	}
 	have, e := inspectRuntimeABI()
 	if e != nil {
 		return e
 	}
-	// The alpha.5 upstream CUDA core was built on Ubuntu 24.04. Keep its actual
-	// requirements explicit until a separately verified Ubuntu 22.04 core is pinned.
-	return validateRuntimeABI(have, runtimeABI{GLIBC: "2.38", GLIBCXX: "3.4.32"})
+	return validateRuntimeABI(have, runtimeABI{GLIBC: spec.MinimumGLIBC, GLIBCXX: spec.MinimumGLIBCXX})
 }

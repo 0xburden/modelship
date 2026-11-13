@@ -40,8 +40,8 @@ jobs:
           echo '6f1d562086d84ae85df880d3711079ec225602b51d530608e5001600625067dd  runtime-check/cuda.tar.gz' | sha256sum -c -
           tar -xzf runtime-check/cuda.tar.gz --strip-components=1 -C runtime-check/cuda
           libs="$PWD/runtime-check/core:$PWD/runtime-check/cuda"
-          sh runtime/llama/audit.sh runtime-check/core runtime-out/evidence/host-core-abi.txt "$libs"
-          sh runtime/llama/audit.sh runtime-check/cuda runtime-out/evidence/host-cuda-abi.txt "$libs"
+          sh runtime/llama/audit.sh runtime-check/core runtime-out/evidence/host-core-abi.txt "$libs" 1
+          sh runtime/llama/audit.sh runtime-check/cuda runtime-out/evidence/host-cuda-abi.txt "$libs" 1
           for arg in version help list-devices; do
             env -i PATH=/usr/bin:/bin HOME="$RUNNER_TEMP" LD_LIBRARY_PATH="$libs" \
               runtime-check/core/llama-server "--$arg" > "runtime-out/evidence/host-$arg.txt" 2>&1

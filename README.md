@@ -11,7 +11,7 @@ A GPU-first model deployment CLI: inspect a Hugging Face repository and the loca
 On a supported NVIDIA server with the prerequisites already installed:
 
 ```sh
-curl -fsSL https://modelship.bubuntu.xyz/v0.3.0-alpha.5/install.sh -o install.sh
+curl -fsSL https://modelship.bubuntu.xyz/v0.3.0-alpha.6/install.sh -o install.sh
 # Inspect the downloaded script from your trusted release before running it.
 sh install.sh
 ```
@@ -224,7 +224,7 @@ Image service: `/health`, `/docs`. Image generation is GPU-intensive; smoke-test
 Build immutable release assets:
 
 ```sh
-VERSION=v0.3.0-alpha.5 sh scripts/release.sh
+VERSION=v0.3.0-alpha.6 sh scripts/release.sh
 # dist/modelship_linux_amd64, dist/install.sh, dist/SHA256SUMS
 ```
 
@@ -254,14 +254,14 @@ Checksums from the same release host detect corruption, **not a compromised host
 
 ### Optional Dokploy static image
 
-Deploy `Dockerfile.releases` from this Git repository in Dokploy and route an HTTPS domain to container port 80. The multi-stage Dockerfile builds the Linux binary, installer, and checksums itself; `dist/` does not need to be committed or uploaded. The tracked `releases/current` file selects the version (`v0.3.0-alpha.5`); the old `RELEASE_VERSION` build argument is ignored with a warning. The build preserves checksum-pinned prior releases and refuses to overwrite an existing version with different bytes. Deploy a reviewed commit/tag. The service only serves static assets, not model requests or credentials. See **[DEPLOYMENT.md](DEPLOYMENT.md)** for the walkthrough.
+Deploy `Dockerfile.releases` from this Git repository in Dokploy and route an HTTPS domain to container port 80. The multi-stage Dockerfile builds the Linux binary, installer, and checksums itself; `dist/` does not need to be committed or uploaded. The tracked `releases/current` file selects the version (`v0.3.0-alpha.6`); the old `RELEASE_VERSION` build argument is ignored with a warning. The build preserves checksum-pinned prior releases and refuses to overwrite an existing version with different bytes. Deploy a reviewed commit/tag. The service only serves static assets, not model requests or credentials. See **[DEPLOYMENT.md](DEPLOYMENT.md)** for the walkthrough.
 
 ## Install WAN from the versioned release
 
 On Linux x86_64 with an idle A10080GB-class GPU, Python>=3.11 and existing working CUDA PyTorch>=2.9, plus sufficient free disk (roughly150GB recommended):
 
 ```sh
-export MODELSHIP_RELEASE_BASE=https://modelship.bubuntu.xyz/v0.3.0-alpha.5
+export MODELSHIP_RELEASE_BASE=https://modelship.bubuntu.xyz/v0.3.0-alpha.6
 curl -fsSL "$MODELSHIP_RELEASE_BASE/install.sh" -o /tmp/modelship-install.sh
 # Inspect this trusted script before running it.
 sh /tmp/modelship-install.sh deploy Wan-AI/Wan2.2-T2V-A14B \

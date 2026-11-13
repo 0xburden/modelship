@@ -1,7 +1,7 @@
 #!/bin/sh
 # Audit ELF version needs without executing any model or replacing host libraries.
 set -eu
-root=${1:?bundle directory}; report=${2:?report path}; libraries=${3:-$root}
+root=${1:?bundle directory}; report=${2:?report path}; libraries=${3:-$root}; gpuless=${4:-0}
 : > "$report"
 check_version() {
   ns=$1 max=$2 file=$3
@@ -19,5 +19,11 @@ find "$root" -type f | sort | while IFS= read -r file; do
   check_version CXXABI 1.3.13 "$file"
   LD_LIBRARY_PATH="$libraries" ldd "$file" >> "$report" 2>&1 || { echo 'Runtime dependency resolution failed' >&2; exit 1; }
 done
-if grep -q 'not found' "$report"; then echo 'Unresolved runtime dependency' >&2; exit 1; fi
-printf 'ABI_AUDIT_PASSED: GLIBC<=2.35 GLIBCXX<=3.4.30 CXXABI<=1.3.13\n' >> "$report"
+missing=$(grep 'not found' "$report" || true)
+if [ "$gpuless" = 1 ]; then
+  # The ABI audit runner has no NVIDIA driver. This exception is deliberately
+  # exact and CI-only; the CLI still requires real CUDA0 enumeration on launch.
+  missing=$(printf '%s\n' "$missing" | grep -vE '^[[:space:]]*libcuda\.so\.1 => not found[[:space:]]*$' || true)
+fi
+if [ -n "$missing" ]; then echo 'Unresolved runtime dependency' >&2; exit 1; fi
+printf 'ABI_AUDIT_PASSED (symbol/dependency audit only; real CUDA device preflight still required): GLIBC<=2.35 GLIBCXX<=3.4.30 CXXABI<=1.3.13\n' >> "$report"
