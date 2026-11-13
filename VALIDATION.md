@@ -285,11 +285,11 @@ User report (not independent validation): `llmfan46/gemma-4-E4B-it-ultra-uncenso
 Clarity checks passed locally: Go race/vet and84 Python tests on Linux with the actual CLI, including existing PTY/cancellation/lifecycle tests, no skips. The new explanatory text is presentation-only: regression assertions retain native/first GPU/modelship/8000/4096/python3/local/no-key/30m and pin the same reviewed SHA. No live user instance, model repository or deployment was accessed; the community checkpoint row remains user-reported, not independently validated. The branch prepares v0.3.0-alpha.4 with all prior release assets pinned for retention; no release/merge is performed by this change.
 
 
-## Unreleased GGUF vision / guided menus
+## Alpha.7 GGUF vision / guided menus
 
 - User-reported alpha.6 GGUF text success is not independently measured inference evidence. Published alpha.6 remains unchanged/text-only.
 - Metadata-only: all **25** reviewed standalone quant headers at the pinned Qwen3.8 revision parsed with bounded exact Range reads; mixed block types/accounting validated without tensor payloads. Matching F16 projector: clip/qwen3vl_merger, 334 tensors, 927,587,264 encoded tensor bytes / 20,224-byte aligned header; download pin is 927,607,488 bytes.
 - CPU fixtures: strict artifact pairing, combined cache/disk/physical budgets, JSON state round-trip, private CUDA0 projector arguments; PNG/JPEG decoding/MIME/data-only policy; capability auth and existing text-only rejection; no invalid media reaches the synthetic backend. No model, projector or CUDA inference was performed.
 - Wizard CPU and actual Linux PTY tests: numeric/letter shortcuts, buffered Esc/:back replay, changed name and final approval, no repeated immutable inspection, Ctrl-C/EOF/SIGINT behavior and exact terminal restoration. Existing hard blockers and separate consents remain.
 - Separate private Console: capability-gated one-image chat controls and memory-only history; strict no-remote-image proxy contract and legacy text fallback. Browser QA uses a CPU response fixture, not model image understanding.
-- Real vision quality, GPU placement/peak memory, image-token behavior, cache/restart, public ingress and Console-to-GPU validation remain **not done**. No instance changes, tensor downloads, release or merge authorized/performed for this work.
+- Real vision quality, GPU placement/peak memory, image-token behavior, cache/restart, public ingress and Console-to-GPU validation remain **not done**. No instance changes or tensor downloads were performed. Merge approval does not establish real GPU vision validation.

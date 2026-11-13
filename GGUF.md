@@ -1,6 +1,6 @@
-# Experimental GGUF chat and vision (unreleased branch)
+# Experimental GGUF chat and vision (v0.3.0-alpha.7)
 
-**Published v0.3.0-alpha.6 remains text-only with the original single Q4 artifact.** The quantization menus, optional vision and schema 6 below are unreleased feature-branch work; no release/version change is implied. Alpha.6 repaired Ubuntu22.04 runtime compatibility. A user reports working GGUF text inference after that repair; we have not independently measured that deployment. **Actual vision inference, quality and peak memory remain unvalidated.** CPU fixtures, source/ABI inspection and bounded real artifact headers are not GPU validation.
+**Published v0.3.0-alpha.6 remains text-only with the original single Q4 artifact.** The quantization menus, optional vision and schema 6 below target **v0.3.0-alpha.7**, the fresh version for this merge; alpha.6 assets are retained byte-for-byte. Alpha.6 repaired Ubuntu22.04 runtime compatibility. A user reports working GGUF text inference after that repair; we have not independently measured that deployment. **Actual vision inference, quality and peak memory remain unvalidated.** CPU fixtures, source/ABI inspection and bounded real artifact headers are not GPU validation.
 
 ## Explicit target
 
@@ -49,7 +49,7 @@ Only the selected GPU UUID is visible to the child: `CUDA0`, all GPU layers, no 
 
 ## Plan, then deploy
 
-Text-only example (also works on published v0.3.0-alpha.6); vision flags require the unreleased feature build:
+Text-only example (also works on published v0.3.0-alpha.6); vision flags require v0.3.0-alpha.7 or newer:
 
 ```sh
 # Metadata/header only; no GPU required and no tensor payloads downloaded.
@@ -70,7 +70,7 @@ modelship deploy unsloth/Qwen3.8-27B-GGUF --backend native --experimental \
   --name qwen-gguf --context 4096 --port 8000 --wait 45m
 ```
 
-The feature-branch wizard lists quantizations with a visible default, asks text-only versus vision, skips Python probes and reviews the same plan/reproducible flags. **Esc** goes back to the previous editable answer; `:back` is an alternative. Later selections and approvals are discarded. Read-only metadata may be reused; live GPU/cache/fit checks refresh. Ctrl-C/EOF cancel. Terminal settings are restored on back/cancel/errors; no keys, installs or downloads occur before final approval.
+The alpha.7 wizard lists quantizations with a visible default, asks text-only versus vision, skips Python probes and reviews the same plan/reproducible flags. **Esc** goes back to the previous editable answer; `:back` is an alternative. Later selections and approvals are discarded. Read-only metadata may be reused; live GPU/cache/fit checks refresh. Ctrl-C/EOF cancel. Terminal settings are restored on back/cancel/errors; no keys, installs or downloads occur before final approval.
 
 The encoded tensor-byte **placement budget** must fit both total and currently free selected-GPU VRAM. This is conservative for fixed CPU tensors, not a measured resident minimum or peak. The runtime estimate separately budgets F16 KV for all advertised blocks (conservative for this hybrid architecture) plus 8 GiB for recurrent state, temporary allocations and activations. **`--allow-risk` only acknowledges this heuristic; it cannot override the weight-placement budget, disk, metadata, runtime or access policy.** VRAM is refreshed before install/launch/manual starts; no reservation is made. 4096 is a preset; this initial adapter accepts 128–32768, also bounded by the header. Advertised 262144 is not a tested GPU capacity. Host RAM and actual activation peaks remain unvalidated.
 
