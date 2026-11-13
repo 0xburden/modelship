@@ -158,7 +158,12 @@ func (h *Hub) inspect(ctx context.Context, id, revision string, partial bool) (M
 	if !commitPattern.MatchString(m.Hub.SHA) {
 		return m, fmt.Errorf("repository response has no valid immutable commit SHA")
 	}
-	m.Hub.ID = id
+	// HF model URLs/IDs are case-insensitive, but reviewed profiles and cache
+	// paths need one spelling. Trust the API's spelling ONLY for the same
+	// validated repository; never follow metadata to a different model/owner.
+	if canonical, e := ParseModel(m.Hub.ID); e != nil || canonical != m.Hub.ID || !strings.EqualFold(canonical, id) {
+		m.Hub.ID = id
+	}
 	m.Config = m.Hub.Config // Useful public projection if gated configuration cannot be read.
 	has := func(name string) bool {
 		for _, f := range m.Hub.Siblings {
@@ -168,7 +173,7 @@ func (h *Hub) inspect(ctx context.Context, id, revision string, partial bool) (M
 		}
 		return false
 	}
-	base := "/" + id + "/resolve/" + m.Hub.SHA + "/"
+	base := "/" + m.Hub.ID + "/resolve/" + m.Hub.SHA + "/"
 	var err error
 	switch {
 	case has("model_index.json"):

@@ -371,9 +371,9 @@ func runWizardAttempt(ctx context.Context, input io.Reader, output io.Writer, d 
 		}
 	}
 	defaultRevision := "main"
-	if selected == ggufRepo {
+	if strings.EqualFold(selected, ggufRepo) {
 		defaultRevision = ggufRevision
-	} else if selected == gemmaVisionRepo {
+	} else if strings.EqualFold(selected, gemmaVisionRepo) {
 		defaultRevision = gemmaVisionRevision
 	}
 	catalog, err := LoadRecipes()
@@ -387,9 +387,9 @@ func runWizardAttempt(ctx context.Context, input io.Reader, output io.Writer, d 
 	}
 	if defaultRevision == "main" {
 		w.explain("Upstream branch default", "main means the repository's current upstream branch, not a fixed or locally tested version. It is resolved once now; review/deployment use the exact pinned commit SHA.")
-	} else if selected == gemmaVisionRepo {
+	} else if strings.EqualFold(selected, gemmaVisionRepo) {
 		w.explain("Reviewed image-profile pin", "This optional Gemma image adapter was reviewed at this exact commit. Text-only is still the default; other revisions/variants are not substituted or assumed vision-compatible.")
-	} else if selected == ggufRepo {
+	} else if strings.EqualFold(selected, ggufRepo) {
 		w.explain("GGUF artifact pin", "This first GGUF adapter uses a reviewed immutable artifact manifest; another revision or file is not silently substituted.")
 	} else {
 		w.explain("Reviewed recipe pin", "This custom-code recipe defaults to its reviewed immutable commit, not the latest upstream branch. Source-code approval is still separate.")
@@ -407,6 +407,9 @@ func runWizardAttempt(ctx context.Context, input io.Reader, output io.Writer, d 
 	model, err := d.inspect(ctx, selected, revision)
 	if err != nil {
 		return err
+	}
+	if model.Hub.ID != selected && strings.EqualFold(model.Hub.ID, selected) {
+		w.explain("Hub canonical spelling", fmt.Sprintf("%q → %q is the same repository, casing only. The resolved commit is unchanged; no model/revision substitution.", selected, model.Hub.ID))
 	}
 	recipe, known, err := findRecipe(model)
 	if err != nil {
@@ -514,6 +517,8 @@ func runWizardAttempt(ctx context.Context, input io.Reader, output io.Writer, d 
 				return e
 			}
 			vision = mode == "vision-images"
+		} else if recipe.ID == "gemma4-text" {
+			w.explain("Image input unavailable", fmt.Sprintf("Selected %q @ %q stays text-only. %s. No model/revision is substituted and no vision approval is assumed.", model.Hub.ID, model.Hub.SHA, e))
 		}
 	}
 	fmt.Fprintln(output, "Inspecting local GPUs and available memory...")
