@@ -28,3 +28,17 @@ jobs:
         with:
           name: modelship-linux-amd64
           path: dist/
+  gemma-processor-cpu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: tests/processor-requirements.txt
+      - run: python3 -m pip install -r tests/processor-requirements.txt
+      - run: python3 tests/gemma_processor_check.py
+        env:
+          HF_HUB_OFFLINE: '1'
+          HF_HUB_DISABLE_TELEMETRY: '1'

@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "profiles": [
+    {
+      "id": "gemma4-e4b-image-v1",
+      "repo": "google/gemma-4-E4B-it",
+      "revision": "4ecc2ba63bcac23ba4a767fc87025b1450f84c9c",
+      "recipe": "gemma4-text",
+      "architecture": "Gemma4ForConditionalGeneration",
+      "processor": {
+        "name": "processor_config.json",
+        "size": 1689,
+        "sha256": "32bdf45d2ad4cc29a0822ddd157a182de76644f0419a6228d151495256e9813c"
+      },
+      "max_image_tokens": 280,
+      "activation_allowance_mib": 2048
+    }
+  ]
+}

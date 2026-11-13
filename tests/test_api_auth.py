@@ -43,7 +43,7 @@ class AuthTests(unittest.TestCase):
         self.addCleanup(self.client.close)
 
     def test_every_path_requires_header_auth_before_routing_or_body(self):
-        for path in ['/health', '/v1/models', '/docs', '/redoc', '/openapi.json', '/v1/videos/video-fixture', '/v1/videos/video-fixture/content', '/unknown']:
+        for path in ['/health', '/v1/models', '/v1/capabilities', '/docs', '/redoc', '/openapi.json', '/v1/videos/video-fixture', '/v1/videos/video-fixture/content', '/unknown']:
             response = self.client.get(path)
             self.assertEqual(response.status_code, 401, path)
             self.assertEqual(response.headers['www-authenticate'], 'Bearer realm="modelship"')

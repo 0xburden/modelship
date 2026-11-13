@@ -373,6 +373,8 @@ func runWizardAttempt(ctx context.Context, input io.Reader, output io.Writer, d 
 	defaultRevision := "main"
 	if selected == ggufRepo {
 		defaultRevision = ggufRevision
+	} else if selected == gemmaVisionRepo {
+		defaultRevision = gemmaVisionRevision
 	}
 	catalog, err := LoadRecipes()
 	if err != nil {
@@ -385,6 +387,8 @@ func runWizardAttempt(ctx context.Context, input io.Reader, output io.Writer, d 
 	}
 	if defaultRevision == "main" {
 		w.explain("Upstream branch default", "main means the repository's current upstream branch, not a fixed or locally tested version. It is resolved once now; review/deployment use the exact pinned commit SHA.")
+	} else if selected == gemmaVisionRepo {
+		w.explain("Reviewed image-profile pin", "This optional Gemma image adapter was reviewed at this exact commit. Text-only is still the default; other revisions/variants are not substituted or assumed vision-compatible.")
 	} else if selected == ggufRepo {
 		w.explain("GGUF artifact pin", "This first GGUF adapter uses a reviewed immutable artifact manifest; another revision or file is not silently substituted.")
 	} else {
@@ -454,7 +458,7 @@ func runWizardAttempt(ctx context.Context, input io.Reader, output io.Writer, d 
 		}
 		model.GGUF.Vision = nil
 		if hasProjector {
-			w.explain("Input capability", "Text-only is the safety default. Vision loads the separately pinned F16 projector, adds memory/disk budgets and permits one uploaded image per conversation. It is image understanding, not image generation; actual vision inference is unvalidated.")
+			w.explain("Input capability", "Text-only is the safety default. Vision loads the separately pinned F16 projector, adds memory/disk budgets and permits one uploaded image per conversation. It is image understanding, not image generation. Real-GPU image understanding is user-confirmed; coverage of all quants/hardware and peak memory is not established.")
 			mode, e := w.choose("Input mode", []string{"text-only", "vision-images"}, "text-only")
 			if e != nil {
 				return e
@@ -501,6 +505,16 @@ func runWizardAttempt(ctx context.Context, input io.Reader, output io.Writer, d 
 	backend, err := w.choose("Backend", recipe.Backends, backendDefault)
 	if err != nil {
 		return err
+	}
+	if recipe.Format != "gguf" && backend == "native" {
+		if _, e := nativeVisionFor(model); e == nil {
+			w.explain("Input capability", "Text-only stays the default. The reviewed Gemma image mode uses the same full BF16 checkpoint, a pinned PIL image processor and an extra activation heuristic. One uploaded PNG/JPEG + text; not image generation/audio/video. CPU tests are not actual GPU image-inference validation.")
+			mode, e := w.choose("Input mode", []string{"text-only", "vision-images"}, "text-only")
+			if e != nil {
+				return e
+			}
+			vision = mode == "vision-images"
+		}
 	}
 	fmt.Fprintln(output, "Inspecting local GPUs and available memory...")
 	hctx, cancel := context.WithTimeout(ctx, 20*time.Second)
@@ -789,7 +803,10 @@ func wizardCommand(exe, requested, weights string, o Options, p Plan, wait time.
 		args = append(args, "--gguf-file", o.GGUFFile)
 	}
 	if o.Vision {
-		args = append(args, "--vision", "--mmproj-file", o.MMProjFile)
+		args = append(args, "--vision")
+		if o.MMProjFile != "" {
+			args = append(args, "--mmproj-file", o.MMProjFile)
+		}
 	}
 	if o.Backend == "native" {
 		if p.GGUF == nil {

@@ -1,0 +1,6 @@
+# CPU-only processor verification; deliberately no torch/torchvision/models.
+transformers==5.22.2
+huggingface-hub==2.4.0
+safetensors==0.8.0
+numpy==2.3.5
+pillow==11.3.0
