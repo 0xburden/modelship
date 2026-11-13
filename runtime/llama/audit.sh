@@ -1,7 +1,7 @@
 #!/bin/sh
 # Audit ELF version needs without executing any model or replacing host libraries.
 set -eu
-root=${1:?bundle directory}; report=${2:?report path}
+root=${1:?bundle directory}; report=${2:?report path}; libraries=${3:-$root}
 : > "$report"
 check_version() {
   ns=$1 max=$2 file=$3
@@ -17,7 +17,7 @@ find "$root" -type f | sort | while IFS= read -r file; do
   check_version GLIBC 2.35 "$file"
   check_version GLIBCXX 3.4.29 "$file"
   check_version CXXABI 1.3.13 "$file"
-  LD_LIBRARY_PATH="$root" ldd "$file" >> "$report" 2>&1 || { echo 'Runtime dependency resolution failed' >&2; exit 1; }
+  LD_LIBRARY_PATH="$libraries" ldd "$file" >> "$report" 2>&1 || { echo 'Runtime dependency resolution failed' >&2; exit 1; }
 done
 if grep -q 'not found' "$report"; then echo 'Unresolved runtime dependency' >&2; exit 1; fi
 printf 'ABI_AUDIT_PASSED: GLIBC<=2.35 GLIBCXX<=3.4.29 CXXABI<=1.3.13\n' >> "$report"

@@ -15,8 +15,33 @@ jobs:
     timeout-minutes: 100
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Reserve disk on this disposable GitHub-hosted build runner
+        run: |
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/powershell
+          docker image prune --all --force
+          df -h /
       - name: Build checksum-pinned CUDA runtime (no GPU or model weights)
         run: docker build --file runtime/llama/Dockerfile --target export --output type=local,dest=runtime-out .
+      - name: Test core with the actual pinned CUDA userspace archive on Ubuntu 22.04
+        run: |
+          mkdir -p runtime-check/core runtime-check/cuda
+          (cd runtime-out && sha256sum -c SHA256SUMS)
+          tar -xzf runtime-out/llama-b12110-ubuntu22.04-cuda12.8-r1.tar.gz -C runtime-check/core
+          curl --fail --location --retry 3 --proto '=https' --proto-redir '=https' \
+            -o runtime-check/cuda.tar.gz \
+            https://github.com/ggml-org/llama.cpp/releases/download/b12110/cudart-llama-b12110-bin-ubuntu-cuda-12.8-x64.tar.gz
+          echo '6f1d562086d84ae85df880d3711079ec225602b51d530608e5001600625067dd  runtime-check/cuda.tar.gz' | sha256sum -c -
+          tar -xzf runtime-check/cuda.tar.gz --strip-components=1 -C runtime-check/cuda
+          libs="$PWD/runtime-check/core:$PWD/runtime-check/cuda"
+          sh runtime/llama/audit.sh runtime-check/core runtime-out/evidence/host-core-abi.txt "$libs"
+          sh runtime/llama/audit.sh runtime-check/cuda runtime-out/evidence/host-cuda-abi.txt "$libs"
+          LD_LIBRARY_PATH="$libs" runtime-check/core/llama-server --version > runtime-out/evidence/host-version.txt 2>&1
+          LD_LIBRARY_PATH="$libs" runtime-check/core/llama-server --list-devices > runtime-out/evidence/host-devices.txt 2>&1
+          ! grep -E 'GLIBC.*not found|GLIBCXX.*not found|error while loading shared libraries' runtime-out/evidence/host-devices.txt
+          for flag in --fit --no-context-shift --api-key-file --no-agent --no-mmproj --reasoning --spec-type; do
+            grep -q -- "$flag" runtime-out/evidence/help.txt
+          done
       - name: Record bundle checksum and ABI evidence
         run: |
           cat runtime-out/SHA256SUMS
