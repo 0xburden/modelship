@@ -34,7 +34,7 @@ func TestRecipeRegistryLoadsAndPinsDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog.Recipes) != 10 {
+	if len(catalog.Recipes) != 11 {
 		t.Fatal(len(catalog.Recipes))
 	}
 	for _, r := range catalog.Recipes {

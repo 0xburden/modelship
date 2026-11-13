@@ -232,7 +232,11 @@ func ConfigureNative(ctx context.Context, name string, listen, key *string) erro
 	}
 	// Auth module first, entrypoint second, metadata last. A partial failure leaves
 	// legacy configs loopback-only. Existing inference modules and venv stay intact.
-	for _, name := range []string{"api_auth.py", "native_entry.py"} {
+	accessAssets := []string{"api_auth.py", "native_entry.py"}
+	if cfg.Plan.GGUF != nil {
+		accessAssets = nil
+	}
+	for _, name := range accessAssets {
 		data, e := assets.ReadFile("assets/" + name)
 		if e != nil {
 			return e

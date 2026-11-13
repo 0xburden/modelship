@@ -1,5 +1,14 @@
 # Validation record
 
+## Unreleased GGUF text: header and CPU-adapter evidence only
+
+- Exact target and runtime pins: [GGUF.md](GGUF.md). No instance changes or model weight downloads were made. Full model/asset SHA-256 pins were checked against immutable HF LFS and named GitHub release metadata; actual archive/model bytes have not been downloaded or independently hash-verified in this run.
+- The new Go inspector parsed the real selected file using exact HTTP 206 Range responses, bounded header-only read-ahead: GGUF v3, `qwen35`, 866 non-overlapping tensors, 10,996,640-byte aligned header, 16,553,263,104 encoded tensor bytes, 262144 advertised context, 65 blocks, 4 KV heads, key/value dimensions 256. Mixed tensor types: F32, Q8_0, Q3_K/Q4_K/Q5_K/Q6_K, IQ4_NL/IQ3_S/IQ4_XS. No tensor payload was fetched.
+- Pinned llama.cpp source contains qwen35 support and the exact configured device/fitting/auth/template/server flags. GGML block-size formulas were checked against that source. This is source compatibility evidence, **not runtime/inference proof**.
+- Synthetic tests cover strict header/range parsing, quant-block bytes/overflow/truncation, explicit one-file selection, hard free/total VRAM and disk gates, cache accounting, verified/resumed downloads, extraction/link traversal defense, runtime manifest checks, schema boundary, sanitized/authenticated text-only gateway, templating, unknown/media/tool/stream fields, busy behavior and retaining the slot across client disconnect. A 15-second fuzz run completed 378,963 executions; race/vet checks passed.
+- A real Go gateway spawned a separate CPU-only synthetic private HTTP child with an independent key; readiness, owner authentication, a fixture response and clean shutdown passed. The word “Paris” in these fixtures is **not output from the actual GGUF model**. The public CLI model/GPU gates were not bypassed. Existing Linux Python/real-CLI regression suite: 84 tests passed.
+- Still required: actual pinned runtime extraction/device execution, selected model download/load, meaningful text/chat evaluation, measured memory, real GPU busy/errors/auth, stop/start/cache/console testing, host-package preservation. No claim of deployed GGUF support or vision/projector support yet. Published alpha.4 and retained releases are unchanged.
+
 ## User-run native GPU baseline: Thunder Compute
 
 Hardware/environment reported from the server:

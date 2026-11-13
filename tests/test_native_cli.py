@@ -178,7 +178,7 @@ class NativeCLIIntegrationTests(unittest.TestCase):
         configured = self.cli('configure','--listen','0.0.0.0','--api-key-file',str(key_path))
         self.assertEqual(configured.returncode,0,configured.stderr)
         cfg=json.loads((self.dir/'config.json').read_text())
-        self.assertEqual(cfg['schema'],4)
+        self.assertEqual(cfg['schema'],5)
         self.assertEqual(cfg['plan']['listen'],'0.0.0.0')
         self.assertEqual(cfg['plan']['api_key_file'],str(key_path))
         self.assertEqual((self.dir/'server.py').read_text(),'preserved original inference')

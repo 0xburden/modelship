@@ -79,7 +79,7 @@ Implemented differences from the established text recipe:
 - Recipe-driven chat templates are called with `enable_thinking=False` for the initial bounded-output contract. Because this is an instruction checkpoint, Gemma's `/v1/completions` also frames its prompt as a single user turn; it is not a raw base-model continuation API. Live testing found repetitive output for untemplated prefixes, so HTTP 200/non-empty output alone was not treated as a quality pass. Established Qwen/raw causal-LM completion behavior is unchanged.
 - Python >=3.11 is checked before pip. Pinned modern requirements: Transformers 5.22.2, Hugging Face Hub 2.4.0, safetensors 0.8.0, accelerate 1.15.0, plus pinned web dependencies.
 - Existing CUDA-enabled host PyTorch is inherited, constrained, and checked before/after installation; old Transformers 4.56 deployments keep their existing private environments.
-- Model recipe ID, dtype, loader, and dependency pins are recorded with the deployment. New native state now uses schema 4 to preserve research/code consent, component dtypes and cache location; older CLIs safely refuse it. The feature CLI reads schema-1 and schema-2 deployments too. The historical Gemma validation below used schema 2.
+- Model recipe ID, dtype, loader, and dependency pins are recorded with the deployment. New native source state now uses schema 5 (released alpha.2–alpha.4 used schema 4) to preserve research/code consent, component dtypes and cache location; older CLIs safely refuse it. The feature CLI reads schema-1 and schema-2 deployments too. The historical Gemma validation below used schema 2.
 
 **Validation:** actual checkpoint loading and inference now pass on the user's fresh Thunder Base/A6000: Ubuntu 22.04.5, Python 3.12.13, driver 610.43.02, host PyTorch 2.12.1+cu130. The pinned Gemma revision passes completions/chat, a semantic Paris check, busy handling, context/parameter errors, media-input rejection, stop/start, and cache reuse. A simultaneous Qwen2.5-3B regression passes in the separate legacy Transformers environment. Runtime environment inspection confirms Gemma BF16/multimodal loader/templating versus Qwen float16/causal loader/raw completions. The published alpha CLI correctly rejects schema-2 state. Keep the recipe experimental: only this checkpoint, text-only input, 4096 context, and this hardware/runtime combination have been tested; this is not validation of all Gemma 4 variants or full multimodal support.
 
@@ -96,6 +96,12 @@ These reports are **separate from independently reproduced GPU validation**. The
 | [`llmfan46/gemma-4-E4B-it-ultra-uncensored-heretic`](https://huggingface.co/llmfan46/gemma-4-E4B-it-ultra-uncensored-heretic) | User reported that guided setup succeeded and the Gemma variant worked, following the v0.3.0-alpha.3 wizard rollout. | Exact installed CLI version, pinned model revision, hardware, selected options, prompts, outputs and quantitative checks were not collected. Not independently downloaded, inspected or GPU-tested for this report. |
 
 Gemma-family checkpoints can match the existing `gemma4-text` recipe by recognized architecture/layout; this report does **not** add a special repository allowlist or broaden arbitrary-code/quantized-format support. A synthetic metadata regression checks that family matching continues to work under this alternate repository name; it is not evidence about the real repository's weights, quality, license or inference behavior. Review the checkpoint's own terms and the exact pinned deployment plan.
+
+## Unreleased experimental GGUF text
+
+[GGUF.md](GGUF.md) documents explicit `unsloth/Qwen3.8-27B-GGUF` selection: only `Qwen3.8-27B-UD-Q4_K_M.gguf` at `4af51b3542f775b0a8e4b310bfb3f17e01c306c9`, using checksum-pinned llama.cpp b12110/CUDA12.8. Source feature only; not in the published alpha.4 installer. Bounded header inspection passed (866 tensors; 16,553,263,104 encoded tensor bytes versus 16,564,259,744 file bytes). Full GPU layer placement is explicit, automatic fitting/context shifting disabled; no implicit quant change, offload, projector/MTP or repository Python. General GGUF, AWQ/GPTQ/bitsandbytes and quantized image pipelines remain unsupported.
+
+**No actual GGUF CUDA binary/model load, generation quality, VRAM peak or real cached restart has been validated yet.** CPU gateway/child fixtures and source-level architecture support do not establish those facts. Vision support is a separate follow-up. The encoded full-GPU **placement budget** is conservative for fixed CPU tensors, not the safetensors resident-minimum calculation described below.
 
 ## Weights-alone VRAM and disk preflight
 
@@ -116,7 +122,7 @@ Native planning inspects the actual HF cache filesystem and correctly-sized sele
 
 ## Experimental native commands
 
-All new paths require Python >=3.11 and compute capability >=8.0. Qwen3.8, Qwen Image, MOSS and WAN require existing PyTorch >=2.9; it is checked, never replaced. Modern text/image/video dependencies are isolated from established deployments. Workers explicitly set `USE_HUB_KERNELS=NO`, preventing modern Transformers from implicitly fetching Hub kernels. Installed host packages are still part of the trusted runtime.
+The Python-based experimental paths below require Python >=3.11 and compute capability >=8.0. Qwen3.8, Qwen Image, MOSS and WAN require existing PyTorch >=2.9; it is checked, never replaced. Modern text/image/video dependencies are isolated from established deployments. Workers explicitly set `USE_HUB_KERNELS=NO`, preventing modern Transformers from implicitly fetching Hub kernels. Installed host packages are still part of the trusted runtime.
 
 ```sh
 # Full BF16 text weights: a larger GPU is required. Text input only.

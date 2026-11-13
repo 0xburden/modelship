@@ -65,6 +65,8 @@ type ModelIndex struct {
 	Class string `json:"_class_name"`
 }
 type Model struct {
+	GGUF *GGUFSpec
+
 	Hub                   HubModel
 	Config                ModelConfig
 	Index                 ModelIndex

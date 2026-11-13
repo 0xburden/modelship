@@ -1,6 +1,8 @@
 # modelship
 
-A GPU-first model deployment CLI: inspect a Hugging Face repository and the local NVIDIA server, review a plan, then deploy a pinned model revision through Docker or a native Python worker.
+A GPU-first model deployment CLI: inspect a Hugging Face repository and the local NVIDIA server, review a plan, then deploy a pinned model revision through Docker or a native runtime.
+
+**Unreleased source addition:** an experimental, explicitly pinned text-only GGUF/llama.cpp adapter is described in [GGUF.md](GGUF.md). It is **not** in the published alpha.4 installer and has not yet passed actual GPU/model inference validation. Vision remains a separate follow-up.
 
 **Early MVP, not a universal model converter or production control plane.** Go handles orchestration; vLLM (Docker), Transformers (native text), and a small Python/Diffusers service perform inference. No agent API or backend is required.
 
@@ -18,7 +20,7 @@ The published installer knows its immutable release URL; **no environment variab
 
 Press **Enter** to accept the value in brackets; y/N questions default to No. Explanations label defaults as upstream choices, detected suggestions, recipe-controlled settings, recommended presets, computed paths or safety choices. Context is in **tokens**, not output length; advertised context is metadata, not a tested GPU limit. The API port is on the **GPU server**, not SSH; local access is not your browser/laptop localhost. The readiness wait covers worker startup, not generation time. These explanations do not change the selected values or add questions.
 
-The wizard asks for the HF model page/revision, resolves it to an immutable commit, reads bounded headers, and offers the recipe's supported backend/task choices. Single-choice menus select themselves. It inspects GPUs, uses sensible ports (text8000/images8001/video18032), and collects Python/context/API-access/key-file settings. Model precision/loading policy stays fixed by the reviewed recipe: no inferred quantization/offload. Native mode checks existing CUDA PyTorch without installing or replacing it.
+The wizard asks for the HF model page/revision, resolves it to an immutable commit, reads bounded headers, and offers the recipe's supported backend/task choices. Single-choice menus select themselves. It inspects GPUs, uses sensible ports (text8000/images8001/video18032), and collects Python/context/API-access/key-file settings. Model precision/loading policy stays fixed by the reviewed recipe: no inferred quantization/offload. Python-based native recipes check existing CUDA PyTorch without installing or replacing it. The unreleased GGUF adapter instead requires explicit file selection and uses standalone llama.cpp; it skips Python questions/probes.
 
 You then review the exact shared deployment plan and a shell-quoted equivalent command. **No model tensor payload download, pip installation, deployment state or API key generation happens before final confirmation.** A tiny CUDA preflight and metadata/cache inspection are read-only setup checks. New keys are planned file references until approval, generated privately afterward, and never printed. Before final confirmation, cancellation/EOF/Ctrl-C does not deploy; existing keys/deployments are never overwritten/stopped implicitly. WAN conversion, experimental use, research-only licensing, custom-code consent and runtime-memory heuristic override each require their own explicit approval where applicable. Physical weights-fit/disk/policy blockers cannot be overridden.
 
@@ -32,13 +34,13 @@ This first iteration does not add new model adapters, capability-driven generati
 
 - Linux **amd64**, NVIDIA; one selected GPU per deployment.
 - **Docker backend (default):** local daemon with standard NVIDIA Container Toolkit or provider-managed CDI, conservative CUDA 12.8 driver minimum **570.26**. CDI mode currently requires exactly one visible GPU and is not fully validated on Thunder.
-- **Native backend:** working host CUDA-enabled PyTorch plus Python/venv. No Docker/toolkit installation or hard-coded CUDA driver minimum; actual CUDA computation is checked. See **[NATIVE.md](NATIVE.md)**. This is the recommended path for the current Thunder server.
+- **Native backend (Python recipes):** working host CUDA-enabled PyTorch plus Python/venv. No Docker/toolkit installation or hard-coded CUDA driver minimum; actual CUDA computation is checked. See **[NATIVE.md](NATIVE.md)**. This is the recommended path for the current Thunder server.
 - Text: unquantized **safetensors** repositories with explicitly recognized architectures: Llama, Mistral, Qwen2, Qwen3, Gemma, Gemma2, Phi3 causal LMs. Exact architecture names and dependency profiles are in `internal/modelship/assets/recipes.json`.
 - Images: standard Diffusers repositories whose `model_index.json` declares **StableDiffusionPipeline**, **StableDiffusionXLPipeline**, or **FluxPipeline**. Both text-to-image and image-to-image are selectable; a deployment serves **one task**.
 - Text requires compute capability >=7.5 in Docker / >=7.0 natively; SD/SDXL >=7.0; FLUX >=8.0 (bfloat16).
 - **Experimental/native:** Gemma 4 and Qwen3.8 text-only; Qwen Image 2.1 generation/editing; explicitly approved/hash-pinned MOSS images; bounded WAN video via an explicitly selected official Diffusers conversion. These need `--experimental` and model-specific resource/license/code prerequisites. See [MODEL_SUPPORT.md](MODEL_SUPPORT.md) for validation status; unvalidated adapters are not GPU-support guarantees.
 
-Not yet supported: GGUF, single-file image checkpoints, variant-only image repositories, adapters/LoRAs, AWQ/GPTQ/bitsandbytes, arbitrary remote model code, original WAN PTH checkpoints, FLUX.2, multi-GPU sharding, automatic quantization/offload, or arbitrary model architectures. Matching an architecture is a compatibility filter, **not** proof that every repository variant will load.
+Not yet supported: general GGUF (only the unreleased pinned text profile above), single-file image checkpoints, variant-only image repositories, adapters/LoRAs, AWQ/GPTQ/bitsandbytes, arbitrary remote model code, original WAN PTH checkpoints, FLUX.2, multi-GPU sharding, automatic quantization/offload, or arbitrary model architectures. Matching an architecture is a compatibility filter, **not** proof that every repository variant will load.
 
 ## Build
 
@@ -296,7 +298,7 @@ Forward the selected port with Thunder as usual and add the resulting `https://I
 
 All native HTTP paths are protected when enabled: health, model discovery, inference, video status/content, docs/OpenAPI, and unknown routes. Missing/malformed/wrong credentials return401 before body parsing or inference. Query-string/cookie keys are not accepted. Authenticated responses use `Cache-Control: no-store`; CLI readiness/status/text smoke authenticate automatically and refuse redirects. An ordinary browser/curl request without a header returning401 is **expected**.
 
-Keys must be owned, regular **0600** files with32–128 base64url characters; the generator emits43 characters plus a newline and refuses overwrites. Generation needs a private parent directory (created0700 if absent). Symlinks, FIFOs, insecure permissions and invalid keys fail closed before weight loading. Only the absolute path—not the key value—is stored in schema4 metadata or the worker environment/argv. Older CLIs reject schema4; keep using the updated CLI after migration. Legacy schemas1–3 without access settings still load and remain loopback-only.
+Keys must be owned, regular **0600** files with32–128 base64url characters; the generator emits43 characters plus a newline and refuses overwrites. Generation needs a private parent directory (created0700 if absent). Symlinks, FIFOs, insecure permissions and invalid keys fail closed before weight loading. Only the absolute path—not the key value—is stored in authentication-aware native metadata or the worker environment/argv. New source builds use schema5 (GGUF/runtime boundary); released alpha.2–alpha.4 used schema4. Older CLIs reject newer schemas; keep using the updated CLI after migration. Legacy schemas1–3 without access settings still load and remain loopback-only.
 
 **Rotation requires a stop/configure/start** with a newly generated key file; a running worker holds the startup key digest, so changing/deleting the file does not revoke that active key immediately. A missing key prevents a new start, but does not prevent status/stop/uninstall. Uninstall does not remove the default external key file.
 

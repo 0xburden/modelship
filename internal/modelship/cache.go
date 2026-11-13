@@ -84,6 +84,9 @@ func InspectModelCache(h *Host, m Model) {
 		return
 	}
 	files, _ := weightFiles(m.Hub.Siblings, recipe.Kind != "text")
+	if m.GGUF != nil {
+		files = []string{m.GGUF.File.Name}
+	}
 	selected := map[string]bool{}
 	for _, name := range files {
 		selected[name] = true
@@ -94,7 +97,11 @@ func InspectModelCache(h *Host, m Model) {
 		if !selected[file.Name] || !fs.ValidPath(file.Name) || file.Bytes() <= 0 {
 			continue
 		}
-		st, err := os.Stat(filepath.Join(snapshot, filepath.FromSlash(file.Name)))
+		path := filepath.Join(snapshot, filepath.FromSlash(file.Name))
+		if m.GGUF != nil {
+			path = ggufModelPath(Plan{Model: m.Hub.ID, Revision: m.Hub.SHA, ModelCacheDir: h.ModelCacheDir, GGUF: m.GGUF})
+		}
+		st, err := os.Stat(path)
 		if err == nil && st.Mode().IsRegular() && st.Size() == file.Bytes() {
 			if h.CachedWeightBytes > math.MaxInt64-file.Bytes() {
 				warn(fmt.Errorf("cached file size overflow"))

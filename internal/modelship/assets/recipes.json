@@ -402,6 +402,32 @@
         "Bounded asynchronous MP4 jobs, one active generation, no backlog. No streaming, image-to-video, offload or quantization.",
         "Bounded A100 80 GB inference and H.264 export tested at 256/5 frames/4 steps and 512/17 frames/30 steps. Both experts are resident; A6000 is blocked. Conservative runtime budget requires explicit --allow-risk on the tested A100."
       ]
+    },
+    {
+      "id": "qwen35-gguf-text",
+      "name": "Qwen3.8 GGUF text (explicit pinned Q4_K_M artifact)",
+      "format": "gguf",
+      "kind": "text",
+      "status": "experimental",
+      "repositories": [
+        "unsloth/Qwen3.8-27B-GGUF"
+      ],
+      "architectures": [
+        "Qwen3_5ForConditionalGeneration"
+      ],
+      "backends": [
+        "native"
+      ],
+      "tasks": [
+        "text-generation"
+      ],
+      "runtime": "llama.cpp",
+      "native_loader": "llama.cpp",
+      "dtype": "gguf",
+      "notes": [
+        "First artifact only: explicit Qwen3.8-27B-UD-Q4_K_M.gguf at the approved revision. Text-only; no auto mmproj/MTP/imatrix selection or CPU fallback.",
+        "Pinned llama.cpp b12110 CUDA12.8; no PyTorch dependency. Live GPU inference remains unvalidated."
+      ]
     }
   ]
 }

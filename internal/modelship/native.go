@@ -28,14 +28,17 @@ type TorchInfo struct {
 	PythonVersion  string `json:"python_version,omitempty"`
 }
 
-// Schema 4 also records the authentication/listener boundary.
+// Schema 5 also records the GGUF runtime/artifact boundary.
 // Older CLIs must reject it instead of ignoring these execution constraints.
-const nativeSchemaVersion = 4
+const nativeSchemaVersion = 5
 
 type NativeConfig struct {
-	Schema int       `json:"schema"`
-	Plan   Plan      `json:"plan"`
-	Torch  TorchInfo `json:"torch"`
+	RuntimeBinary    string        `json:"runtime_binary,omitempty"`
+	RuntimeLibraries []string      `json:"runtime_libraries,omitempty"`
+	RuntimeFiles     []RuntimeFile `json:"runtime_files,omitempty"`
+	Schema           int           `json:"schema"`
+	Plan             Plan          `json:"plan"`
+	Torch            TorchInfo     `json:"torch"`
 }
 type NativeRun struct {
 	PID        int    `json:"pid"`
@@ -117,8 +120,19 @@ func nativeConfig(name string) (NativeConfig, string, error) {
 	if err = readJSONFile(filepath.Join(dir, "config.json"), &cfg); err != nil {
 		return cfg, dir, fmt.Errorf("read native deployment %s: %w", name, err)
 	}
-	if (cfg.Schema != 1 && cfg.Schema != 2 && cfg.Schema != 3 && cfg.Schema != nativeSchemaVersion) || cfg.Plan.Backend != "native" || cfg.Plan.Name != name || !commitPattern.MatchString(cfg.Plan.Revision) || cfg.Plan.Port < 1024 || cfg.Plan.Port > 65535 {
+	if (cfg.Schema != 1 && cfg.Schema != 2 && cfg.Schema != 3 && cfg.Schema != 4 && cfg.Schema != nativeSchemaVersion) || cfg.Plan.Backend != "native" || cfg.Plan.Name != name || !commitPattern.MatchString(cfg.Plan.Revision) || cfg.Plan.Port < 1024 || cfg.Plan.Port > 65535 {
 		return cfg, dir, fmt.Errorf("invalid native deployment metadata")
+	}
+	if cfg.Plan.GGUF == nil && (cfg.Plan.Runtime == "llama.cpp" || cfg.Plan.NativeLoader == "llama.cpp" || cfg.RuntimeBinary != "" || len(cfg.RuntimeFiles) > 0 || len(cfg.RuntimeLibraries) > 0) {
+		return cfg, dir, fmt.Errorf("GGUF runtime fields require a matching format-specific plan")
+	}
+	if cfg.Plan.GGUF != nil {
+		if cfg.Schema < 5 {
+			return cfg, dir, fmt.Errorf("GGUF requires native schema 5")
+		}
+		if err := validateGGUFPlan(cfg.Plan); err != nil {
+			return cfg, dir, err
+		}
 	}
 	if cfg.Schema < 4 && (cfg.Plan.Listen != "" || cfg.Plan.APIKeyFile != "") {
 		return cfg, dir, fmt.Errorf("access settings require native schema 4")
@@ -211,6 +225,9 @@ func probeTorch(ctx context.Context, python string, p Plan) (TorchInfo, error) {
 	return info, nil
 }
 func DeployNative(ctx context.Context, p Plan, wait time.Duration) error {
+	if p.GGUF != nil {
+		return deployGGUF(ctx, p, wait)
+	}
 	if err := validateNativeAccess(p, true); err != nil {
 		return err
 	}
@@ -317,6 +334,11 @@ func runNativeInstall(ctx context.Context, python string, args ...string) error 
 	return cmd.Run()
 }
 func startNative(ctx context.Context, cfg NativeConfig, dir string, wait time.Duration) error {
+	if cfg.Plan.GGUF != nil {
+		if err := verifyGGUFInstall(cfg, dir); err != nil {
+			return err
+		}
+	}
 	if err := validateNativeAccess(cfg.Plan, true); err != nil {
 		return err
 	}
@@ -379,7 +401,7 @@ func startNative(ctx context.Context, cfg NativeConfig, dir string, wait time.Du
 	fmt.Printf("Ready: http://127.0.0.1:%d (native %s, revision %s)\n", cfg.Plan.Port, cfg.Plan.Runtime, cfg.Plan.Revision)
 	return nil
 }
-func NativeExec(name, runID string) error {
+func NativeExec(ctx context.Context, name, runID string) error {
 	if !runIDPattern.MatchString(runID) {
 		return fmt.Errorf("invalid native run ID")
 	}
@@ -389,6 +411,9 @@ func NativeExec(name, runID string) error {
 	}
 	if err = validateNativeAccess(cfg.Plan, true); err != nil {
 		return err
+	}
+	if cfg.Plan.GGUF != nil {
+		return runGGUFWorker(ctx, cfg, dir, runID)
 	}
 	python := filepath.Join(dir, "venv", "bin", "python")
 	return syscall.Exec(python, []string{python, "-u", filepath.Join(dir, "native_entry.py"), "--run-id", runID}, nativeEnv(cfg.Plan, runID))
@@ -545,7 +570,7 @@ func ManageNative(ctx context.Context, action, name string) error {
 		if state == "running" {
 			ready, healthError = nativeHealth(ctx, cfg, run)
 		}
-		return printJSON(map[string]any{"backend": "native", "name": name, "state": state, "pid": pid, "model": cfg.Plan.Model, "revision": cfg.Plan.Revision, "endpoint": fmt.Sprintf("http://127.0.0.1:%d", cfg.Plan.Port), "listen": nativeListen(cfg.Plan), "auth_enabled": cfg.Plan.APIKeyFile != "", "ready": ready, "health_error": healthError, "log": filepath.Join(dir, "service.log"), "torch": cfg.Torch})
+		return printJSON(map[string]any{"backend": "native", "name": name, "state": state, "pid": pid, "model": cfg.Plan.Model, "revision": cfg.Plan.Revision, "endpoint": fmt.Sprintf("http://127.0.0.1:%d", cfg.Plan.Port), "listen": nativeListen(cfg.Plan), "auth_enabled": cfg.Plan.APIKeyFile != "", "ready": ready, "health_error": healthError, "log": filepath.Join(dir, "service.log"), "torch": cfg.Torch, "runtime": cfg.Plan.Runtime, "gguf": cfg.Plan.GGUF})
 	}
 	if action == "logs" {
 		cmd := exec.CommandContext(ctx, "tail", "-n", "200", "-f", filepath.Join(dir, "service.log"))
