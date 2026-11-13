@@ -1,3 +1,5 @@
+> **v0.3.0-alpha.9:** fixes case-only Hugging Face URL/repository spellings hiding the Gemma vision menu. The inspector accepts the Hub's validated canonical spelling only for the same repository; the exact reviewed image-profile revision/architecture and opt-in remain mandatory. Unsupported Gemma selections now explain why image input is unavailable. No new GPU inference validation is claimed.
+
 > **v0.3.0-alpha.8:** opt-in Gemma 4 PyTorch image understanding is implemented, with CPU/real-PIL-processor checks only. It is **not in published alpha.7**. See [PYTORCH_VISION.md](PYTORCH_VISION.md); real GPU image inference remains pending user testing. Existing GGUF validation is unchanged.
 
 > **v0.3.0-alpha.7:** reviewed GGUF quant menus (UD-Q4_K_M default), optional one-image vision, and Esc-back navigation are described in [GGUF.md](GGUF.md). Published **alpha.6 remains unchanged/text-only**. GGUF image understanding is **user-validated on a real GPU** (2026-11-13); quantization-wide coverage and peak memory are not established.

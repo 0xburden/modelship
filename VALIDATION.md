@@ -1,5 +1,15 @@
 # Validation record
 
+## Alpha.9 Gemma URL/vision discovery repair
+
+A CPU-only reproduction of alpha.8 showed the exact reviewed Gemma checkpoint/architecture choosing the text family recipe but failing the image-profile lookup when the same HF repository was typed in lowercase. Public bounded Hub metadata for canonical/lowercase URLs returned the same canonical ID, SHA and architecture. This establishes a casing bug, not the exact original user input or GPU behavior.
+
+The shared Hub inspector now adopts only a syntactically valid, casing-only canonical ID for the requested repository. Foreign owners/models, URLs, tree paths, missing IDs and control-bearing metadata cannot redirect model selection; revision/config reads stay pinned to the original resolved SHA. Tests use local HTTP metadata fixtures and the real Hub→wizard→planner path for lowercase/mixed/canonical direct URLs, visible reviewed revision defaults, explicit `main`, exact profile/plan identity and reproduction flags. Other Gemma sizes/community repos/unreviewed revisions receive explicit no-vision diagnostics and no substitution. EOF at the input-mode prompt performs no hardware probe, key creation, install or deployment.
+
+Go race/vet and the full Linux Python/real-CLI suite passed: 100 tests (97 passed, 3 optional release-HTTP cases skipped in the general run). Separately, all 3 actual-nginx HTTP cases passed, verifying all 30 retained/current assets, the exact alpha.9 latest alias, no-store headers and forbidden alias 404s. The Docker release-site build passed with a deliberately stale alpha.8 compatibility build argument; source-controlled alpha.9 remained authoritative. An actual Linux/AMD64 install-only smoke used the unmodified baked installer plus real packaged binary/checksums in a network-disabled disposable container; version/catalog passed without hardware/model access.
+
+No model tensors, user instances, GPU inference or host-library changes were used. Image recognition quality/peak memory and live Console routing remain unvalidated. All published alpha.8 binary/installer/manifest bytes were fetched and hash-verified before adding retention pins; alpha.9 publication is a new immutable version, not a rewrite of alpha.8.
+
 ## Alpha.6 GGUF runtime ABI repair
 
 The user’s alpha.5 deployment stopped before CUDA enumeration/model download: host glibc2.35 lacked GLIBC2.38, and its confirmed GLIBCXX maximum3.4.30 lacked the upstream core’s3.4.32 requirement. No host glibc/libstdc++/driver/Torch changes were made.
