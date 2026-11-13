@@ -1,0 +1,31 @@
+name: Pinned llama.cpp Ubuntu 22.04 runtime
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/gguf-ubuntu2204-runtime]
+    paths: ['runtime/llama/**', '.github/workflows/llama-runtime.yml']
+permissions:
+  contents: read
+concurrency:
+  group: llama-runtime-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Build checksum-pinned CUDA runtime (no GPU or model weights)
+        run: docker build --file runtime/llama/Dockerfile --target export --output type=local,dest=runtime-out .
+      - name: Record bundle checksum and ABI evidence
+        run: |
+          cat runtime-out/SHA256SUMS
+          cat runtime-out/evidence/size.txt
+          cat runtime-out/evidence/version.txt
+          tail -n 1 runtime-out/evidence/abi.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: llama-b12110-ubuntu22.04-cuda12.8-r1
+          path: runtime-out/
+          compression-level: 0
+          retention-days: 7
