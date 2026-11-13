@@ -23,7 +23,7 @@ class ReleaseSiteTests(unittest.TestCase):
 set -eu
 mkdir -p dist
 printf '%s' "$VERSION" > dist/modelship_linux_amd64
-printf '%s' installer > dist/install.sh
+printf '%s' "installer:$VERSION" > dist/install.sh
 (cd dist; if command -v sha256sum >/dev/null 2>&1; then sha256sum modelship_linux_amd64 install.sh; else shasum -a 256 modelship_linux_amd64 install.sh; fi) > dist/SHA256SUMS
 ''')
         old = self.root / 'archive/v0.2.0-alpha.1'
@@ -56,6 +56,33 @@ if '--fail' in args and not path.is_file(): sys.exit(22)
         for old in (self.root / 'archive/v0.2.0-alpha.1').iterdir():
             self.assertEqual(old.read_bytes(), (self.root / 'dist/site/v0.2.0-alpha.1' / old.name).read_bytes())
         self.assertEqual((self.root / 'dist/site/v0.3.0-alpha.1/modelship_linux_amd64').read_text(), 'v0.3.0-alpha.1')
+        self.assertEqual((self.root / 'dist/site/latest/install.sh').read_bytes(), (self.root / 'dist/site/v0.3.0-alpha.1/install.sh').read_bytes())
+        self.assertIn('v0.3.0-alpha.1', (self.root / 'dist/site/latest/install.sh').read_text())
+        self.assertFalse((self.root / 'dist/site/latest/modelship_linux_amd64').exists())
+        self.assertFalse((self.root / 'dist/site/latest/SHA256SUMS').exists())
+
+    def test_latest_advances_without_changing_historical_versions(self):
+        # An archive's mutable alias is never fetched/trusted as the selection.
+        (self.root / 'archive/latest').mkdir()
+        (self.root / 'archive/latest/install.sh').write_text('untrusted/stale alias')
+        first = self.run_build()
+        self.assertEqual(first.returncode, 0, first.stderr)
+        previous = self.root / 'dist/site/v0.3.0-alpha.1'
+        original = {p.name: p.read_bytes() for p in previous.iterdir()}
+        shutil.copytree(previous, self.root / 'archive/v0.3.0-alpha.1')
+        with (self.root / 'releases/retained.sha256').open('a') as pins:
+            for name, content in original.items():
+                pins.write(f'{hashlib.sha256(content).hexdigest()}  v0.3.0-alpha.1/{name}\n')
+        shutil.rmtree(self.root / 'dist')
+        (self.root / 'releases/current').write_text('v0.3.0-alpha.2\n')
+        second = self.run_build()
+        self.assertEqual(second.returncode, 0, second.stderr)
+        for name, content in original.items():
+            self.assertEqual((self.root / 'dist/site/v0.3.0-alpha.1' / name).read_bytes(), content)
+        latest = (self.root / 'dist/site/latest/install.sh').read_bytes()
+        self.assertEqual(latest, (self.root / 'dist/site/v0.3.0-alpha.2/install.sh').read_bytes())
+        self.assertNotEqual(latest, original['install.sh'])
+        self.assertNotIn(b'untrusted/stale', latest)
 
     def test_corrupted_archive_fails_before_site_publication(self):
         (self.root / 'archive/v0.2.0-alpha.1/modelship_linux_amd64').write_bytes(b'changed')

@@ -292,4 +292,11 @@ Clarity checks passed locally: Go race/vet and84 Python tests on Linux with the 
 - CPU fixtures: strict artifact pairing, combined cache/disk/physical budgets, JSON state round-trip, private CUDA0 projector arguments; PNG/JPEG decoding/MIME/data-only policy; capability auth and existing text-only rejection; no invalid media reaches the synthetic backend. No model, projector or CUDA inference was performed.
 - Wizard CPU and actual Linux PTY tests: numeric/letter shortcuts, buffered Esc/:back replay, changed name and final approval, no repeated immutable inspection, Ctrl-C/EOF/SIGINT behavior and exact terminal restoration. Existing hard blockers and separate consents remain.
 - Separate private Console: capability-gated one-image chat controls and memory-only history; strict no-remote-image proxy contract and legacy text fallback. Browser QA uses a CPU response fixture, not model image understanding.
-- Real vision quality, GPU placement/peak memory, image-token behavior, cache/restart, public ingress and Console-to-GPU validation remain **not done**. No instance changes or tensor downloads were performed. Merge approval does not establish real GPU vision validation.
+- At implementation time, real GPU vision had not been tested by us; the subsequent user confirmation below updates the image-understanding status. Independent reproduction, GPU placement/peak memory, image-token boundaries, cache/restart, public ingress and Console-to-GPU verification remain unestablished. No assistant instance changes or tensor downloads were performed.
+
+
+### User-confirmed real-GPU GGUF vision — 2026-11-13
+
+**Status: validated by user report — interpretive vision / image understanding.** The user confirmed that vision worked on a real GPU, then deleted the instance to save budget. No instance was recreated, accessed or modified by us for this update.
+
+The exact selected artifact/quantization, GPU, input/output, memory figures, Console-versus-direct-API route and restart behavior were not supplied with the confirmation. Do not infer blanket validation of all 25 catalog variants, a GPU/VRAM fit guarantee, image generation/editing, PyTorch vision, or a controlled independent benchmark. Keep those details unknown rather than reconstructing them from implementation defaults. Existing experimental opt-in and physical/disk/security gates remain unchanged.

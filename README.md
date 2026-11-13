@@ -1,10 +1,10 @@
-> **v0.3.0-alpha.7:** reviewed GGUF quant menus (UD-Q4_K_M default), optional one-image vision, and Esc-back navigation are described in [GGUF.md](GGUF.md). Published **alpha.6 remains unchanged/text-only**. Actual vision GPU inference is unvalidated.
+> **v0.3.0-alpha.7:** reviewed GGUF quant menus (UD-Q4_K_M default), optional one-image vision, and Esc-back navigation are described in [GGUF.md](GGUF.md). Published **alpha.6 remains unchanged/text-only**. GGUF image understanding is **user-validated on a real GPU** (2026-11-13); quantization-wide coverage and peak memory are not established.
 
 # modelship
 
 A GPU-first model deployment CLI: inspect a Hugging Face repository and the local NVIDIA server, review a plan, then deploy a pinned model revision through Docker or a native runtime.
 
-**GGUF repair in v0.3.0-alpha.6:** an experimental, explicitly pinned text-only GGUF/llama.cpp adapter is described in [GGUF.md](GGUF.md). Alpha.6 rebuilds the native core for Ubuntu22.04 (glibc2.35/GLIBCXX3.4.30); alpha.5’s upstream binary is incompatible with that userspace. Text success is user-reported, not independently measured; actual vision inference remains unvalidated and is available experimentally starting in alpha.7.
+**GGUF repair in v0.3.0-alpha.6:** an experimental, explicitly pinned text-only GGUF/llama.cpp adapter is described in [GGUF.md](GGUF.md). Alpha.6 rebuilds the native core for Ubuntu22.04 (glibc2.35/GLIBCXX3.4.30); alpha.5’s upstream binary is incompatible with that userspace. Text success is user-reported, not independently measured; GGUF image understanding is also user-confirmed on a real GPU starting with the alpha.7 path. This is a user validation report, not independent measurement of every artifact or peak memory.
 
 **Early MVP, not a universal model converter or production control plane.** Go handles orchestration; vLLM (Docker), Transformers (native text), and a small Python/Diffusers service perform inference. No agent API or backend is required.
 
@@ -13,10 +13,12 @@ A GPU-first model deployment CLI: inspect a Hugging Face repository and the loca
 On a supported NVIDIA server with the prerequisites already installed:
 
 ```sh
-curl -fsSL https://modelship.bubuntu.xyz/v0.3.0-alpha.6/install.sh -o install.sh
+curl -fsSL https://modelship.bubuntu.xyz/latest/install.sh -o install.sh
 # Inspect the downloaded script from your trusted release before running it.
 sh install.sh
 ```
+
+`/latest/install.sh` is a non-cacheable moving entry point, copied from the version selected by `releases/current`. The downloaded script still pins an immutable version for both the binary and checksums, so an update during installation cannot mix releases. For reproducible installs, use a versioned URL such as `https://modelship.bubuntu.xyz/v0.3.0-alpha.7/install.sh`. No `/latest` binary/checksum aliases are needed.
 
 The published installer knows its immutable release URL; **no environment variable or model flags are needed**. It verifies/installs the CLI first, then launches guided setup when stdin/stdout are terminals. You can also run `~/.local/bin/modelship launch`, or simply `modelship` from a terminal after adding `~/.local/bin` to PATH.
 

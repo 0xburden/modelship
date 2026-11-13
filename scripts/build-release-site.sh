@@ -46,6 +46,11 @@ if [ -s "$manifest" ]; then
 fi
 mkdir -p "$stage/$version"
 cp dist/modelship_linux_amd64 dist/install.sh dist/SHA256SUMS "$stage/$version/"
+# Only this entry point is mutable. Copy the already version-baked installer,
+# never rebake it against /latest: binary/checksum downloads stay in the same
+# immutable version even if a newer release is published during installation.
+mkdir -p "$stage/latest"
+cp "$stage/$version/install.sh" "$stage/latest/install.sh"
 # Do not mix with a prior generated site's contents.
 [ ! -e dist/site ] || { echo 'dist/site already exists; use a fresh build directory' >&2; exit 1; }
 mv "$stage" dist/site

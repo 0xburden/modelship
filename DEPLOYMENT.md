@@ -30,7 +30,7 @@ The repository is public after a review of reachable Git history and GitHub desc
 4. Choose the **Dockerfile** build method.
 5. Build context: repository root (`.`).
 6. Dockerfile path: `Dockerfile.releases`.
-7. The tracked **`releases/current`** selects `v0.3.0-alpha.6`. No version build argument is needed. Existing `RELEASE_VERSION` build arguments are ignored with a warning, so an old Dokploy value cannot accidentally relabel the new binary as the previous alpha.
+7. The tracked **`releases/current`** selects `v0.3.0-alpha.7`. No version build argument is needed. Existing `RELEASE_VERSION` build arguments are ignored with a warning, so an old Dokploy value cannot accidentally relabel the new binary as the previous alpha.
 8. Configure a domain, for example `models.YOUR_DOMAIN`, routed to container port **80**.
 9. Point the domain's DNS record at the Dokploy host, enable HTTPS/certificate issuance, then deploy.
 
@@ -43,6 +43,26 @@ Do not publish the same version path with different content. `scripts/build-rele
 The image also retains every asset listed in `releases/retained.sha256`, including the old checksum file itself. The retained versions are `v0.2.0-alpha.1`, `v0.3.0-alpha.1`, `v0.3.0-alpha.2`, `v0.3.0-alpha.3`, `v0.3.0-alpha.4` and `v0.3.0-alpha.5`; all three original files for each are downloaded from the live HTTPS host and verified against committed SHA-256 pins before the new image is created. Failed downloads/hash checks fail the build rather than silently dropping an old release. Old URLs remain available after the deployment.
 
 **Operational dependency:** the default archive/immutability-check origin is `https://modelship.bubuntu.xyz`; that host must remain reachable during image builds. Keep independent release backups (the matching GitHub Release assets are one option). For a fresh host/domain migration, provide a trusted HTTPS archive and update this explicit origin deliberately. This is a small release host, not a durable object-store archive. Automatic main deployments may remain enabled, but every subsequent change to binary/installer bytes needs a new tracked release version and retention pins for the preceding version.
+
+### Stable installer entry point
+
+`https://modelship.bubuntu.xyz/latest/install.sh` tracks the version selected by `releases/current`. It is a byte-for-byte copy of that version's installer, served with `Cache-Control: no-store, max-age=0` (including errors). It is not included in immutable historical pins. Only the entry point moves: the downloaded script's baked binary/checksum URLs remain versioned, avoiding cross-release races. All `/v.../` assets retain their existing bytes and behavior. This alias-only change does not change the CLI, installer bytes or release version; the normal identical-rebuild immutability guard still applies.
+
+```sh
+curl -fsSL https://modelship.bubuntu.xyz/latest/install.sh -o install.sh
+# Review it, then launch guided setup from a terminal:
+sh install.sh
+# Or: sh install.sh version  # install/update the CLI only; no GPU deployment
+```
+
+Use explicit version URLs for reproducible deployment scripts. The nginx configuration is source-controlled in `releases/nginx.conf`; do not cache/override `/latest/install.sh` at an ingress/CDN. After deploying the alias, verify its body matches the current versioned installer and that its response includes `Cache-Control: no-store`. An explicit `MODELSHIP_RELEASE_BASE` environment override still takes precedence; unset an old override if you want the downloaded installer's selected release.
+
+For optional real-nginx regression checks against a built local container (no GPU work):
+
+```sh
+MODELSHIP_RELEASE_SITE_URL=http://127.0.0.1:18107 \
+  python3 -m unittest discover -s tests -p test_release_http.py -v
+```
 
 ### Pinning a release
 
