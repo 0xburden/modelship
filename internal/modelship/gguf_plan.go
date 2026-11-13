@@ -41,6 +41,9 @@ func ggufOnly(m Model) bool {
 }
 func ggufModelPath(p Plan) string { return ggufArtifactPath(p, p.GGUF.File.Name) }
 func validateGGUFPlan(p Plan) error {
+	if p.Vision != nil {
+		return fmt.Errorf("PyTorch vision profiles cannot be mixed into a GGUF plan")
+	}
 	if p.GGUF == nil {
 		return fmt.Errorf("missing GGUF deployment specification")
 	}

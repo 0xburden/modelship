@@ -216,3 +216,8 @@ Publish a new version only after the intended scope is tested. The tracked `rele
 ## Alpha.7 GGUF input capability
 
 Alpha.7 extends the pinned Qwen3.8 GGUF profile with a reviewed 25-file standalone quant catalog and explicit optional F16 projector. It remains `text-generation` output; vision means **one-image understanding**, not generation/editing/video. All headers are metadata-tested. **GGUF interpretive vision/image understanding is user-validated on a real GPU (2026-11-13).** Exact test artifact/hardware/request details were not provided; this does not establish all 25 quantizations, independent reproduction, quality benchmarks or peak memory. No general GGUF support or repository allowlist widening is implied. Published alpha.6 still accepts only the original text artifact. See [GGUF.md](GGUF.md) for pins, separate budgets, limits and compatibility.
+
+
+## Unreleased Gemma PyTorch image understanding
+
+The previously text-validated `google/gemma-4-E4B-it` at `4ecc2ba63bcac23ba4a767fc87025b1450f84c9c` gains explicit, native-only `--vision` on the feature branch. It is still experimental and **not GPU-validated for image input**. The checked-in image profile pairs the full BF16 checkpoint with a pinned, bounded processor configuration; other Gemma revisions/variants remain text-only until reviewed. Qwen PyTorch image input is not enabled by this work. Existing generation/editing recipes remain separate. See [PYTORCH_VISION.md](PYTORCH_VISION.md).

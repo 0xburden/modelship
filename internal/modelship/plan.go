@@ -33,7 +33,8 @@ type Options struct {
 	TrustModelCode bool
 }
 type Plan struct {
-	GGUF *GGUFSpec `json:"gguf,omitempty"`
+	Vision *NativeVisionProfile `json:"vision,omitempty"`
+	GGUF   *GGUFSpec            `json:"gguf,omitempty"`
 
 	Listen              string            `json:"listen,omitempty"`
 	APIKeyFile          string            `json:"api_key_file,omitempty"`
@@ -93,8 +94,11 @@ func BuildPlan(m Model, h Host, o Options) (Plan, error) {
 	if err := accessOptions(&o); err != nil {
 		return Plan{}, err
 	}
-	if ggufOnly(m) || o.GGUFFile != "" || m.GGUF != nil || o.Vision || o.MMProjFile != "" {
+	if ggufOnly(m) || o.GGUFFile != "" || m.GGUF != nil {
 		return buildGGUFPlan(m, h, o)
+	}
+	if o.MMProjFile != "" {
+		return Plan{}, fmt.Errorf("--mmproj-file applies only to GGUF; PyTorch vision uses its bundled image processor")
 	}
 	p := Plan{Backend: backend, Schema: 1, Model: m.Hub.ID, Revision: m.Hub.SHA, License: m.Hub.CardData.License, Port: o.Port, Name: o.Name, GPUMode: o.GPUMode, GPUCount: len(h.GPUs)}
 	p.Listen, p.APIKeyFile = o.Listen, o.APIKeyFile
@@ -342,6 +346,18 @@ func BuildPlan(m Model, h Host, o Options) (Plan, error) {
 		p.EstimatedVRAMMiB = max64(p.EstimatedVRAMMiB, ceilMiB(float64(p.WeightResidentBytes)*1.15+textKVBytes)+2048)
 	}
 	p.Warnings = append(p.Warnings, "Resident weight bytes are a requested-dtype lower bound: runtime buffers, modules retained in FP32, activations, caches and allocator overhead can require more. A fit flag is not an OOM guarantee.")
+	if o.Vision {
+		profile, e := nativeVisionFor(m)
+		if e != nil {
+			return p, e
+		}
+		p.Vision = profile
+		if e = validateNativeVisionPlan(p); e != nil {
+			return p, e
+		}
+		p.EstimatedVRAMMiB += profile.ActivationAllowanceMiB
+		p.Warnings = append(p.Warnings, "Experimental PyTorch image understanding: one uploaded PNG/JPEG, 4 MiB / 4,194,304 pixels / 4096 per side. Gemma's reviewed PIL processor resizes to at most 280 image soft tokens; these share the fixed context. No URLs, audio/video/tools, quantization or CPU weight offload. The extra 2 GiB activation allowance is an unmeasured heuristic, not a peak-memory guarantee. Full checkpoint weights (including vision) are already counted; real image inference remains unvalidated.")
+	}
 	if backend == "native" && h.ModelCacheInspected {
 		missing := p.WeightBytes - h.CachedWeightBytes
 		if missing < 0 {

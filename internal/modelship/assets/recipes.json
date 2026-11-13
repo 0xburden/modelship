@@ -147,7 +147,7 @@
     },
     {
       "id": "gemma4-text",
-      "name": "Gemma 4 multimodal weights, text-only API",
+      "name": "Gemma 4 native text, optional reviewed image understanding",
       "kind": "text",
       "status": "experimental",
       "repositories": [
@@ -182,7 +182,7 @@
       ],
       "notes": [
         "Loads the full conditional-generation checkpoint; E4B effective parameters do not mean 4B stored parameters.",
-        "Text prompts only. Image/audio/video inputs and tool calling are not implemented.",
+        "Text-only by default. Explicit --vision enables image understanding only for the reviewed official Gemma E4B profile/revision; audio/video/tools remain unsupported.",
         "Uses a separate modern Transformers environment; existing 4.x deployments are not upgraded."
       ]
     },
@@ -426,7 +426,7 @@
       "dtype": "gguf",
       "notes": [
         "Reviewed standalone quantization catalog at the pinned revision; UD-Q4_K_M is the visible wizard default. Optional --vision --mmproj-file mmproj-F16.gguf enables one-image understanding. No implicit projector/MTP/imatrix selection or CPU fallback.",
-        "Pinned llama.cpp b12110 CUDA12.8; no PyTorch dependency. Live GPU inference remains unvalidated."
+        "Pinned llama.cpp b12110 CUDA12.8; no PyTorch dependency. GGUF image understanding is user-validated on a real GPU; quantization-wide/independent/peak-memory validation is not established."
       ]
     }
   ]

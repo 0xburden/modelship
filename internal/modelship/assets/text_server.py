@@ -8,9 +8,10 @@ from typing import Literal
 
 import torch
 from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from starlette.concurrency import run_in_threadpool
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from vision_input import VisionMessage, chat_capabilities, image_count, normalize_messages
 
 MODEL = os.environ.get("MODEL_ID", "")
 REVISION = os.environ.get("MODEL_REVISION", "")
@@ -19,10 +20,12 @@ RECIPE = os.environ.get("MODEL_RECIPE", "")
 TEMPLATE_COMPLETIONS = os.environ.get("MODEL_TEMPLATE_COMPLETIONS", "false") == "true"
 DISABLE_THINKING = os.environ.get("MODEL_DISABLE_THINKING", "false") == "true"
 CONTEXT = int(os.environ.get("MODEL_CONTEXT", "4096"))
+VISION_PROFILE = os.environ.get("MODEL_VISION_PROFILE", "")
 TOKENIZER = None
+IMAGE_PROCESSOR = None
 NETWORK = None
 BUSY = threading.Lock()
-MAX_BODY = 1024 * 1024
+MAX_BODY = (8 if VISION_PROFILE else 1) * 1024 * 1024
 
 
 class Parameters(BaseModel):
@@ -49,9 +52,19 @@ class Chat(Parameters):
     messages: list[Message] = Field(min_length=1, max_length=128)
 
 
+class VisionChat(Parameters):
+    messages: list[VisionMessage] = Field(min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def one_image(self):
+        if image_count(self.messages) > 1:
+            raise ValueError("one image is supported across a conversation request")
+        return self
+
+
 @asynccontextmanager
 async def lifespan(app):
-    global NETWORK, TOKENIZER
+    global NETWORK, TOKENIZER, IMAGE_PROCESSOR
     if not MODEL or not REVISION:
         raise RuntimeError("MODEL_ID and immutable MODEL_REVISION are required")
     TOKENIZER = AutoTokenizer.from_pretrained(MODEL, revision=REVISION, trust_remote_code=False)
@@ -60,6 +73,9 @@ async def lifespan(app):
     if dtype_name not in ("float16", "bfloat16"):
         raise RuntimeError("unsupported recipe dtype")
     dtype = getattr(torch, dtype_name)
+    if VISION_PROFILE:
+        from gemma_vision import load_image_processor
+        IMAGE_PROCESSOR = load_image_processor(VISION_PROFILE, MODEL, REVISION, RECIPE, loader_name, dtype_name, TOKENIZER)
     if loader_name == "multimodal-lm":
         from transformers import AutoModelForMultimodalLM
         loader = AutoModelForMultimodalLM
@@ -80,6 +96,7 @@ async def lifespan(app):
     yield
     NETWORK = None
     TOKENIZER = None
+    IMAGE_PROCESSOR = None
     torch.cuda.empty_cache()
 
 
@@ -89,12 +106,23 @@ app = FastAPI(title="modelship native text", lifespan=lifespan)
 @app.get("/health")
 def health():
     return {"ready": NETWORK is not None, "model": MODEL, "revision": REVISION,
-            "task": "text-generation", "run_id": RUN_ID, "recipe": RECIPE}
+            "task": "text-generation", "run_id": RUN_ID, "recipe": RECIPE,
+            "input_modalities": ["text", "image"] if VISION_PROFILE else ["text"]}
 
 
 @app.get("/v1/models")
 def models():
-    return {"object": "list", "data": [{"id": MODEL, "object": "model", "owned_by": "modelship"}]}
+    return {"object": "list", "data": [{"id": MODEL, "object": "model", "owned_by": "modelship",
+                                          "input_modalities": ["text", "image"] if VISION_PROFILE else ["text"]}]}
+
+
+@app.get("/v1/capabilities")
+def capabilities():
+    return {"schema_version": 1, "model": MODEL, "revision": REVISION, "run_id": RUN_ID,
+            "runtime": "transformers", "profile": VISION_PROFILE or None,
+            "input_modalities": ["text", "image"] if VISION_PROFILE else ["text"],
+            "output_modalities": ["text"], "tasks": ["text-generation"],
+            "context_tokens": CONTEXT, "chat": chat_capabilities(bool(VISION_PROFILE), 280)}
 
 
 def generate(req, chat=False):
@@ -104,23 +132,39 @@ def generate(req, chat=False):
         raise HTTPException(422, "streaming is not implemented by the native backend")
     if not BUSY.acquire(blocking=False):
         raise HTTPException(503, "GPU busy; retry after the current request finishes")
+    images = []
     try:
         templated = chat or TEMPLATE_COMPLETIONS
         if templated:
             if not TOKENIZER.chat_template:
                 raise HTTPException(422, "model has no chat template for this recipe")
-            messages = [message.model_dump() for message in req.messages] if chat else [{"role": "user", "content": req.prompt}]
+            if chat and VISION_PROFILE:
+                try:
+                    messages, images = normalize_messages(req.messages)
+                except (ValueError, OSError):
+                    raise HTTPException(422, "invalid bounded image chat input; use one PNG/JPEG data image and accompanying text") from None
+            else:
+                messages = [message.model_dump() for message in req.messages] if chat else [{"role": "user", "content": req.prompt}]
             prompt = TOKENIZER.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True,
                 **({"enable_thinking": False} if DISABLE_THINKING else {}),
             )
         else:
             prompt = req.prompt
-        inputs = TOKENIZER(prompt, return_tensors="pt", add_special_tokens=not templated)
+        if VISION_PROFILE:
+            try:
+                inputs = IMAGE_PROCESSOR.prepare(prompt, images, TOKENIZER)
+            except (ValueError, TypeError, KeyError):
+                raise HTTPException(422, "image preprocessing or placeholder/token layout is unsupported") from None
+        else:
+            inputs = TOKENIZER(prompt, return_tensors="pt", add_special_tokens=not templated)
         count = inputs["input_ids"].shape[1]
         if count + req.max_tokens > CONTEXT:
             raise HTTPException(422, "prompt plus max_tokens exceeds the deployment context limit")
-        inputs = {key: value.to("cuda") for key, value in inputs.items()}
+        # Preserve token/position/mask integer dtypes. Only image pixels use the
+        # reviewed compute dtype; never cast IDs or positions to BF16.
+        inputs = {key: value.to(device="cuda", dtype=torch.bfloat16) if key == "pixel_values"
+                  else value.to("cuda") for key, value in inputs.items()}
         kwargs = {"max_new_tokens": req.max_tokens, "do_sample": req.temperature > 0}
         if req.temperature > 0:
             kwargs.update(temperature=req.temperature, top_p=req.top_p)
@@ -149,15 +193,17 @@ def generate(req, chat=False):
         torch.cuda.empty_cache()
         raise HTTPException(503, "GPU out of memory; reduce context or stop competing workloads") from exc
     finally:
+        for image in images:
+            image.close()
         BUSY.release()
 
 
 async def parse_request(request, schema):
     data = bytearray()
     async for chunk in request.stream():
+        if len(data) + len(chunk) > MAX_BODY:
+            raise HTTPException(413, "request exceeds the deployment body limit")
         data.extend(chunk)
-        if len(data) > MAX_BODY:
-            raise HTTPException(413, "request exceeds 1 MiB")
     try:
         return schema.model_validate_json(data)
     except ValidationError as exc:
@@ -173,7 +219,7 @@ def request_schema(schema):
         if isinstance(value, dict):
             if "$ref" in value:
                 return inline(definitions[value["$ref"].rsplit("/", 1)[-1]])
-            return {key: inline(item) for key, item in value.items()}
+            return {key: inline(item) for key, item in value.items() if key != "discriminator"}
         return value
     return {"requestBody": {"required": True, "content": {
         "application/json": {"schema": inline(definition)}
@@ -185,6 +231,6 @@ async def completions(request: Request):
     return await run_in_threadpool(generate, await parse_request(request, Completion))
 
 
-@app.post("/v1/chat/completions", openapi_extra=request_schema(Chat))
+@app.post("/v1/chat/completions", openapi_extra=request_schema(VisionChat if VISION_PROFILE else Chat))
 async def chats(request: Request):
-    return await run_in_threadpool(generate, await parse_request(request, Chat), True)
+    return await run_in_threadpool(generate, await parse_request(request, VisionChat if VISION_PROFILE else Chat), True)

@@ -239,7 +239,7 @@ func TestNativeSchema4ReadsLegacySchemasWithoutIgnoringFutureConstraints(t *test
 	if err = privateDir(dir); err != nil {
 		t.Fatal(err)
 	}
-	for _, schema := range []int{1, 2, 3, 4, 5} {
+	for _, schema := range []int{1, 2, 3, 4, 5, 6} {
 		if err = writeJSONFile(filepath.Join(dir, "config.json"), NativeConfig{Schema: schema, Plan: p}); err != nil {
 			t.Fatal(err)
 		}

@@ -44,7 +44,8 @@ Plan/deploy options:
   --research         Acknowledge non-commercial research/evaluation use (Qwen Image)
   --trust-model-code Explicit approval of the pinned, hash-verified MOSS Python code
   --gguf-file FILE  Explicit reviewed GGUF variant; no automatic conversion
-  --vision --mmproj-file FILE  Opt in to the reviewed image-understanding projector
+  --vision          Opt in to reviewed image understanding (native Gemma or GGUF)
+  --mmproj-file FILE  Explicit reviewed projector (required for GGUF vision only)
   --weights-repo ID  Explicit official WAN Diffusers conversion; never inferred
   --name modelship  --allow-risk   --gpu-mode auto|nvidia|cdi (Docker)
   --json            Print machine-readable plan (plan only)
@@ -174,7 +175,7 @@ func planCommand(ctx context.Context, action string, args []string) error {
 	fs := flag.NewFlagSet(action, flag.ContinueOnError)
 	o := Options{}
 	fs.StringVar(&o.Backend, "backend", "docker", "docker or native")
-	fs.BoolVar(&o.Vision, "vision", false, "enable reviewed GGUF image understanding (explicit projector required)")
+	fs.BoolVar(&o.Vision, "vision", false, "enable reviewed native image understanding (GGUF additionally requires --mmproj-file)")
 	fs.StringVar(&o.MMProjFile, "mmproj-file", "", "explicit reviewed GGUF vision projector filename")
 	fs.StringVar(&o.GGUFFile, "gguf-file", "", "explicit approved standalone GGUF filename (native experimental only)")
 	fs.StringVar(&o.Listen, "listen", "", "native IPv4 listener (default 127.0.0.1); 0.0.0.0 requires --api-key-file")
@@ -249,7 +250,7 @@ func planCommand(ctx context.Context, action string, args []string) error {
 			return err
 		}
 	}
-	if o.Vision || o.MMProjFile != "" {
+	if (ggufOnly(model) || o.GGUFFile != "" || model.GGUF != nil) && (o.Vision || o.MMProjFile != "") {
 		if !o.Vision || o.MMProjFile == "" {
 			return fmt.Errorf("use --vision and --mmproj-file together")
 		}
@@ -321,6 +322,9 @@ func writePlan(w io.Writer, p Plan) {
 			fmt.Fprintf(w, "Projector:   %s (%d bytes); SHA-256 %s; %.3f GiB encoded tensor budget\n", v.File.Name, v.File.Size, v.File.SHA256, float64(v.Metadata.TensorBytes)/(1<<30))
 		}
 		fmt.Fprintf(w, "GGUF file:   %s (%d bytes); SHA-256 %s\nRuntime pin: %s; CUDA0/all GPU layers; auto-fit disabled; %s\n", p.GGUF.File.Name, p.GGUF.File.Size, p.GGUF.File.SHA256, p.GGUF.Runtime, mode)
+	}
+	if p.Vision != nil {
+		fmt.Fprintf(w, "Vision:      %s; one uploaded image; at most %d image soft tokens; %d MiB additional activation heuristic (not measured peak)\nProcessor:   %s @ %s; %d bytes; SHA-256 %s\n", p.Vision.ID, p.Vision.MaxImageTokens, p.Vision.ActivationAllowanceMiB, p.Vision.Processor.Name, p.Vision.Revision, p.Vision.Processor.Size, p.Vision.Processor.SHA256)
 	}
 	if p.Context > 0 {
 		fmt.Fprintf(w, "Context:     %d tokens\n", p.Context)
