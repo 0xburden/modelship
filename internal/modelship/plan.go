@@ -11,6 +11,9 @@ const VLLMImage = "vllm/vllm-openai:v0.10.2"
 const ImageRuntime = "modelship-diffusers:0.1.0"
 
 type Options struct {
+	Vision     bool
+	MMProjFile string
+
 	GGUFFile string
 
 	Listen         string
@@ -90,7 +93,7 @@ func BuildPlan(m Model, h Host, o Options) (Plan, error) {
 	if err := accessOptions(&o); err != nil {
 		return Plan{}, err
 	}
-	if ggufOnly(m) || o.GGUFFile != "" || m.GGUF != nil {
+	if ggufOnly(m) || o.GGUFFile != "" || m.GGUF != nil || o.Vision || o.MMProjFile != "" {
 		return buildGGUFPlan(m, h, o)
 	}
 	p := Plan{Backend: backend, Schema: 1, Model: m.Hub.ID, Revision: m.Hub.SHA, License: m.Hub.CardData.License, Port: o.Port, Name: o.Name, GPUMode: o.GPUMode, GPUCount: len(h.GPUs)}

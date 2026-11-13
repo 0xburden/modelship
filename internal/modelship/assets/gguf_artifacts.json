@@ -1,0 +1,140 @@
+{
+  "schema": 1,
+  "repo": "unsloth/Qwen3.8-27B-GGUF",
+  "revision": "4af51b3542f775b0a8e4b310bfb3f17e01c306c9",
+  "default": "Qwen3.8-27B-UD-Q4_K_M.gguf",
+  "models": [
+    {
+      "name": "Qwen3.8-27B-Q4_0.gguf",
+      "size": 16056478688,
+      "sha256": "ede16c7b36e578ca87a8c70e011e4b4633a32c831c0ce76d0f474582384e671d"
+    },
+    {
+      "name": "Qwen3.8-27B-Q4_1.gguf",
+      "size": 17540705248,
+      "sha256": "3e020514545c310dfc511dc8d3ddc23482b645189cb9287816d84bed6eddd4ac"
+    },
+    {
+      "name": "Qwen3.8-27B-Q8_0.gguf",
+      "size": 29047086048,
+      "sha256": "a680f44a06920e5d689774823782006aa3acc8db95750323373b24139b67e348"
+    },
+    {
+      "name": "Qwen3.8-27B-UD-IQ1_M.gguf",
+      "size": 6729166848,
+      "sha256": "1b5165a7149ea51e683c8eaf23372188ad9fc9d1a795386f7a1b558acf847dc6"
+    },
+    {
+      "name": "Qwen3.8-27B-UD-IQ1_S.gguf",
+      "size": 6192222208,
+      "sha256": "3895b6eaa91e705c06ad1938d16c22e86f073c6a67df86260a1da79be3d1f887"
+    },
+    {
+      "name": "Qwen3.8-27B-UD-IQ2_S.gguf",
+      "size": 8422719488,
+      "sha256": "f213bf4ff7dd70531cf7dea9e217baffb6b8e6a7d608bf7c175d9f155e1d000d"
+    },
+    {
+      "name": "Qwen3.8-27B-UD-IQ2_XS.gguf",
+      "size": 7625883648,
+      "sha256": "be3842ebaaaf8412e434ce856cb05abb0ae9033494c61bff09b289a90d7f7f8e"
+    },
+    {
+      "name": "Qwen3.8-27B-UD-IQ2_XXS.gguf",
+      "size": 7206043648,
+      "sha256": "f51f7340110329e897623338c9458544a88a76bfbc360808c847b8d8d0277a6c"
+    },
+    {
+      "name": "Qwen3.8-27B-UD-IQ3_S.gguf",
+      "size": 12040883104,
+      "sha256": "d847e2c1e4aa276e4b7b8e9ad7628050e61e165d49ab995407bc36677a6f3864"
+    },
+    {
+      "name": "Qwen3.8-27B-UD-IQ3_XXS.gguf",
+      "size": 10934860704,
+      "sha256": "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee"
+    },
+    {
+      "name": "Qwen3.8-27B-UD-IQ4_XS.gguf",
+      "size": 14352911264,
+      "sha256": "4b194b34ecec99fdfb74caef84445ccd01c987de87d96ae8ca50dc434b4b0a38"
+    },
+    {
+      "name": "Qwen3.8-27B-UD-Q2_K_XL.gguf",
+      "size": 9948666784,
+      "sha256": "18f1187f38e7994b05c08cb45c674b90b7f17523687c83a4614fe493f7ea739d"
+    },
+    {
+      "name": "Qwen3.8-27B-UD-Q3_K_XL.gguf",
+      "size": 13146393504,
+      "sha256": "7b20f0679da6f5c6ec7971e241630f44fe1e123e5c99bfea90c433268b355723"
+    },
+    {
+      "name": "Qwen3.8-27B-UD-Q4_K_M.gguf",
+      "size": 16564259744,
+      "sha256": "1bce504dfecd84153666928a41d8a66706f0158d3a317bc5196b72819d7dc529"
+    },
+    {
+      "name": "Qwen3.8-27B-UD-Q4_K_S.gguf",
+      "size": 15358213024,
+      "sha256": "75bc9c8adba2842e72f0ab5201aaa07133c5010b566305c09187fcbdcd364017"
+    },
+    {
+      "name": "Qwen3.8-27B-UD-Q4_K_XL.gguf",
+      "size": 17659407264,
+      "sha256": "2a5f3565f39cf885103da591182c1266da64745737b42b452fd3e675369f1211"
+    },
+    {
+      "name": "Qwen3.8-27B-UD-Q5_K_M.gguf",
+      "size": 19870878624,
+      "sha256": "e2771d4c10c6b77141552ea7a21631067271f17baf918f46a3cba78495f92e1e"
+    },
+    {
+      "name": "Qwen3.8-27B-UD-Q5_K_S.gguf",
+      "size": 18764794784,
+      "sha256": "f42f66ba89073030064027bd30fe637010b458e843d1936f89207b7e49ce80c9"
+    },
+    {
+      "name": "Qwen3.8-27B-UD-Q5_K_XL.gguf",
+      "size": 20976962464,
+      "sha256": "a9c4a1d9f7298dfb00c95dd83241530bc07b141ee01ec6962cd31b39d746837c"
+    },
+    {
+      "name": "Qwen3.8-27B-UD-Q6_K.gguf",
+      "size": 21980441504,
+      "sha256": "6cac55f876015d6d4b94b1656d23f79f424ac9b583652aedf0633dba116576a8"
+    },
+    {
+      "name": "Qwen3.8-27B-UD-Q6_K_L.gguf",
+      "size": 24181549984,
+      "sha256": "2847d974be08517e53be08b1d0226970e92168b68cd31e5de0a3e13f808fba1f"
+    },
+    {
+      "name": "Qwen3.8-27B-UD-Q6_K_M.gguf",
+      "size": 23087180704,
+      "sha256": "3e253088108e612dac4fe845d73945234afb4e7095638711402b8317f8f65ca7"
+    },
+    {
+      "name": "Qwen3.8-27B-UD-Q6_K_XL.gguf",
+      "size": 25299061664,
+      "sha256": "701d8fa9ed214ab21bfc130cd2a7df19ca89bbef7713e2dfb19f3c63696aa917"
+    },
+    {
+      "name": "Qwen3.8-27B-UD-Q8_K_L.gguf",
+      "size": 28045695904,
+      "sha256": "2a13bba36d2efa213f9275abc430c40e4d914b145bfde976f30f1bb5b7e23ac2"
+    },
+    {
+      "name": "Qwen3.8-27B-UD-Q8_K_XL.gguf",
+      "size": 31457991680,
+      "sha256": "af36ecb6b5db1407953345b746c14ac93f0657dda413910b4348683a2d990377"
+    }
+  ],
+  "projectors": [
+    {
+      "name": "mmproj-F16.gguf",
+      "size": 927607488,
+      "sha256": "cbb841a9ee0636b2ec172f5bb8df2ea8dfeb01e90fe7c6126581d662a0b4e43e"
+    }
+  ]
+}

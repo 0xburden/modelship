@@ -23,7 +23,8 @@ var errWizardCanceled = errors.New("setup canceled; no deployment or API key was
 // Only the UI is new: inspection, policy/fit planning and deployment stay shared
 // with the existing automation commands. Tests replace side-effect boundaries.
 type wizardDeps struct {
-	gguf func(context.Context, *Model, string) error
+	gguf   func(context.Context, *Model, string) error
+	vision func(context.Context, *Model, string) error
 
 	inspect    func(context.Context, string, string) (Model, error)
 	detect     func(context.Context, string) (Host, error)
@@ -37,7 +38,11 @@ type wizardDeps struct {
 
 func defaultWizardDeps() wizardDeps {
 	exe, _ := os.Executable()
-	return wizardDeps{gguf: func(ctx context.Context, m *Model, file string) error {
+	return wizardDeps{vision: func(ctx context.Context, m *Model, file string) error {
+		hub := NewHub()
+		hub.Token = os.Getenv("HF_TOKEN")
+		return hub.inspectGGUFProjector(ctx, m, file)
+	}, gguf: func(ctx context.Context, m *Model, file string) error {
 		hub := NewHub()
 		hub.Token = os.Getenv("HF_TOKEN")
 		return hub.inspectGGUF(ctx, m, file)
@@ -65,6 +70,9 @@ func launchCommand(ctx context.Context, args []string) error {
 }
 
 type wizardUI struct {
+	labels  map[string]string
+	session *wizardSession
+
 	ctx context.Context
 	in  *bufio.Reader
 	out io.Writer
@@ -81,29 +89,54 @@ func (w *wizardUI) explain(source, detail string) {
 }
 
 func (w *wizardUI) ask(label, fallback string, valid func(string) error) (string, error) {
+	if w.session != nil {
+		s := w.session
+		if s.cursor < len(s.answers) {
+			value := s.answers[s.cursor]
+			if valid == nil || valid(value) == nil {
+				s.cursor++
+				return value, nil
+			}
+			s.answers = s.answers[:s.cursor]
+		}
+		if s.redoSet {
+			fallback = s.redo
+			s.redoSet = false
+		}
+	}
 	for {
 		if err := w.ctx.Err(); err != nil {
 			return "", err
 		}
+		question := fmt.Sprintf("%s: ", label)
 		if fallback != "" {
-			fmt.Fprintf(w.out, "%s [%s]: ", label, fallback)
-		} else {
-			fmt.Fprintf(w.out, "%s: ", label)
+			question = fmt.Sprintf("%s [%s]: ", label, fallback)
 		}
-		// A canceled signal must exit even while terminal input is waiting. The CLI
-		// process owns stdin and exits on cancellation; no deployment runs in here.
-		result := make(chan wizardLine, 1)
-		go func() { data, err := w.in.ReadSlice('\n'); result <- wizardLine{string(data), err} }()
 		var line wizardLine
-		select {
-		case <-w.ctx.Done():
-			return "", w.ctx.Err()
-		case line = <-result:
+		if w.session != nil && w.session.terminal != nil {
+			line.text, line.err = readWizardTerminal(w.ctx, w.session.terminal, w.out, question)
+		} else {
+			fmt.Fprint(w.out, question)
+			// A canceled signal must exit even while terminal input is waiting. The CLI
+			// process owns stdin and exits on cancellation; no deployment runs in here.
+			result := make(chan wizardLine, 1)
+			go func() { data, err := w.in.ReadSlice('\n'); result <- wizardLine{string(data), err} }()
+			select {
+			case <-w.ctx.Done():
+				return "", w.ctx.Err()
+			case line = <-result:
+			}
+		}
+		if errors.Is(line.err, errWizardBack) || errors.Is(line.err, errWizardCanceled) || errors.Is(line.err, context.Canceled) || errors.Is(line.err, context.DeadlineExceeded) {
+			return "", line.err
 		}
 		if line.err != nil {
 			return "", fmt.Errorf("terminal input ended or exceeded 8 KiB; setup canceled before deployment")
 		}
 		value := strings.TrimSpace(line.text)
+		if value == "\x1b" || value == ":back" {
+			return "", errWizardBack
+		}
 		if value == "" {
 			value = fallback
 		}
@@ -117,20 +150,75 @@ func (w *wizardUI) ask(label, fallback string, valid func(string) error) (string
 				continue
 			}
 		}
+		if w.session != nil {
+			w.session.answers = append(w.session.answers, value)
+			w.session.cursor++
+		}
 		return value, nil
 	}
 }
+func choiceValue(value string, choices []string) (string, bool) {
+	if n, e := strconv.Atoi(value); e == nil && n >= 1 && n <= len(choices) {
+		return choices[n-1], true
+	}
+	if len(value) == 1 {
+		c := strings.ToLower(value)[0]
+		if c >= 'a' && int(c-'a') < len(choices) {
+			return choices[int(c-'a')], true
+		}
+	}
+	for _, choice := range choices {
+		if strings.EqualFold(choice, value) {
+			return choice, true
+		}
+	}
+	return "", false
+}
 func (w *wizardUI) choose(label string, choices []string, fallback string) (string, error) {
-	if len(choices) == 1 {
+	return w.selectChoice(label, choices, fallback, true)
+}
+func (w *wizardUI) selectChoice(label string, choices []string, fallback string, auto bool) (string, error) {
+	if len(choices) == 0 {
+		return "", fmt.Errorf("no supported choices for %s", label)
+	}
+	if len(choices) == 1 && auto {
 		fmt.Fprintf(w.out, "%s: %s (only supported choice; selected automatically)\n", label, choices[0])
 		return choices[0], nil
 	}
-	return w.ask(label+" ("+strings.Join(choices, " / ")+")", fallback, func(value string) error {
-		if !contains(choices, value) {
-			return fmt.Errorf("Choose one of: %s", strings.Join(choices, ", "))
+	if w.session != nil && w.session.redoSet && w.session.cursor == len(w.session.answers) {
+		if v, ok := choiceValue(w.session.redo, choices); ok {
+			fallback = v
+		}
+	}
+	for i, choice := range choices {
+		letter := ""
+		if i < 26 {
+			letter = fmt.Sprintf(" / %c", 'a'+i)
+		}
+		mark := ""
+		if choice == fallback {
+			mark = " (default)"
+		}
+		display := choice
+		if w.labels[choice] != "" {
+			display = w.labels[choice]
+		}
+		fmt.Fprintf(w.out, "  %d%s) %s%s\n", i+1, letter, display, mark)
+	}
+	value, e := w.ask(label+" (number, letter, or full value)", fallback, func(value string) error {
+		if _, ok := choiceValue(value, choices); !ok {
+			return fmt.Errorf("Choose 1–%d, a letter, or a listed value", len(choices))
 		}
 		return nil
 	})
+	if e != nil {
+		return "", e
+	}
+	v, _ := choiceValue(value, choices)
+	if w.session != nil && w.session.cursor > 0 {
+		w.session.answers[w.session.cursor-1] = v
+	}
+	return v, nil
 }
 func (w *wizardUI) confirm(message string) (bool, error) {
 	value, err := w.ask(message+" (y/N)", "n", func(value string) error {
@@ -255,10 +343,10 @@ func (w *wizardUI) access(o *Options) (bool, error) {
 	return keyChoice == "new", err
 }
 
-func runWizard(ctx context.Context, input io.Reader, output io.Writer, d wizardDeps) error {
-	w := wizardUI{ctx: ctx, in: bufio.NewReaderSize(input, 8193), out: output}
+func runWizardAttempt(ctx context.Context, input io.Reader, output io.Writer, d wizardDeps, session *wizardSession) error {
+	w := wizardUI{session: session, ctx: ctx, in: session.reader, out: output}
 	fmt.Fprintln(output, "Modelship — guided model setup\nInspect → choose → review → deploy. No model tensor payloads, installs or keys before final confirmation.\nUse HF_TOKEN in your environment for gated/private repositories; never paste credentials here.")
-	fmt.Fprintln(output, "Press Enter to accept the value in brackets. Type a value to change it; y/N questions default to No. A single supported choice is selected automatically.\nDefaults below are labeled as detected, recipe-controlled, recommended presets, or safety choices—not promises of hardware capacity.")
+	fmt.Fprintln(output, "Press Enter to accept the value in brackets. Menus accept numbers, letters or full values; Esc goes back (or type :back). Ctrl-C cancels. Type a value to change it; y/N questions default to No. A single supported choice is selected automatically.\nDefaults below are labeled as detected, recipe-controlled, recommended presets, or safety choices—not promises of hardware capacity.")
 	requested, err := w.ask("Hugging Face model page or org/repo", "", func(value string) error {
 		if strings.HasPrefix(value, "hf_") && len(value) > 25 {
 			return fmt.Errorf("Enter a model page, not a credential; use HF_TOKEN in your environment")
@@ -329,10 +417,26 @@ func runWizard(ctx context.Context, input io.Reader, output io.Writer, d wizardD
 	if recipe.Status == "planned" {
 		return fmt.Errorf("recipe %s is recognized but not deployable: %s", recipe.ID, strings.Join(recipe.Blockers, "; "))
 	}
-	ggufFile := ""
+	ggufFile, mmprojFile := "", ""
+	vision := false
 	if recipe.Format == "gguf" {
-		fmt.Fprintf(output, "Experimental GGUF: only %s (16.56 GB) is approved in this first text-only adapter. No mmproj, MTP, imatrix or other quant is selected automatically.\n", ggufFilename)
-		ggufFile, err = w.ask("GGUF filename (explicit selection required)", "", func(value string) error { _, e := ggufTarget(selected, model.Hub.SHA, value); return e })
+		options, e := ggufChoices(model)
+		if e != nil {
+			return e
+		}
+		choices := []string{}
+		w.labels = map[string]string{}
+		for _, pin := range options {
+			choices = append(choices, pin.Name)
+			w.labels[pin.Name] = fmt.Sprintf("%s — %.2f GiB download", strings.TrimSuffix(strings.TrimPrefix(pin.Name, "Qwen3.8-27B-"), ".gguf"), float64(pin.Size)/(1<<30))
+		}
+		fallback := ggufFilename
+		if !contains(choices, fallback) && len(choices) > 0 {
+			fallback = ""
+		}
+		w.explain("Recommended quantization preset", "UD-Q4_K_M is a balanced, user-reported working preset—not automatic hardware fitting. These are reviewed immutable files; alternatives are experimental, not independently GPU-tested. Sizes are download bytes, not peak VRAM. Split BF16, MTP, imatrix and unreviewed files are excluded.")
+		ggufFile, err = w.selectChoice("GGUF quantization", choices, fallback, false)
+		w.labels = nil
 		if err != nil {
 			return err
 		}
@@ -341,6 +445,31 @@ func runWizard(ctx context.Context, input io.Reader, output io.Writer, d wizardD
 		}
 		if err = d.gguf(ctx, &model, ggufFile); err != nil {
 			return err
+		}
+		hasProjector := false
+		for _, f := range model.Hub.Siblings {
+			if f.Name == ggufProjectorFile {
+				hasProjector = true
+			}
+		}
+		model.GGUF.Vision = nil
+		if hasProjector {
+			w.explain("Input capability", "Text-only is the safety default. Vision loads the separately pinned F16 projector, adds memory/disk budgets and permits one uploaded image per conversation. It is image understanding, not image generation; actual vision inference is unvalidated.")
+			mode, e := w.choose("Input mode", []string{"text-only", "vision-images"}, "text-only")
+			if e != nil {
+				return e
+			}
+			vision = mode == "vision-images"
+			if vision {
+				mmprojFile = ggufProjectorFile
+				if d.vision == nil {
+					return fmt.Errorf("vision projector inspector unavailable")
+				}
+				if err = d.vision(ctx, &model, mmprojFile); err != nil {
+					return err
+				}
+				fmt.Fprintf(output, "Paired projector: %s @ %s; %.2f GiB additional encoded tensors\n", mmprojFile, model.Hub.SHA, float64(model.GGUF.Vision.Metadata.TensorBytes)/(1<<30))
+			}
 		}
 	}
 	fmt.Fprintf(output, "Resolved: %s @ %s\nRecipe: %s (%s), %s\n", model.Hub.ID, model.Hub.SHA, recipe.ID, recipe.Status, recipe.DType)
@@ -386,15 +515,15 @@ func runWizard(ctx context.Context, input io.Reader, output io.Writer, d wizardD
 	gpuChoices := make([]string, 0, len(host.GPUs))
 	for _, g := range host.GPUs {
 		fmt.Fprintf(output, "GPU %d: %s — %d/%d MiB free\n", g.Index, strconv.QuoteToASCII(g.Name), g.FreeMiB, g.TotalMiB)
-		gpuChoices = append(gpuChoices, strconv.Itoa(g.Index))
+		gpuChoices = append(gpuChoices, "GPU "+strconv.Itoa(g.Index))
 	}
 	w.explain("Detected default", "The first GPU returned by discovery, not the largest or best-fit GPU. MiB are binary memory units; free VRAM is a snapshot and will be rechecked before launch.")
 	gpu, err := w.choose("GPU index", gpuChoices, gpuChoices[0])
 	if err != nil {
 		return err
 	}
-	index, _ := strconv.Atoi(gpu)
-	o := Options{GGUFFile: ggufFile, Backend: backend, Revision: model.Hub.SHA, GPU: index, GPUMode: "auto", Python: "python3", Context: 4096}
+	index, _ := strconv.Atoi(strings.TrimPrefix(gpu, "GPU "))
+	o := Options{Vision: vision, MMProjFile: mmprojFile, GGUFFile: ggufFile, Backend: backend, Revision: model.Hub.SHA, GPU: index, GPUMode: "auto", Python: "python3", Context: 4096}
 	taskDefault := recipe.Tasks[0]
 	if contains(recipe.Tasks, model.Hub.PipelineTag) {
 		taskDefault = model.Hub.PipelineTag
@@ -598,6 +727,9 @@ func runWizard(ctx context.Context, input io.Reader, output io.Writer, d wizardD
 	if err = ctx.Err(); err != nil {
 		return err
 	}
+	if session != nil {
+		session.committed = true
+	}
 	if createKey {
 		if err = d.createKey(o.APIKeyFile); err != nil {
 			return err
@@ -655,6 +787,9 @@ func wizardCommand(exe, requested, weights string, o Options, p Plan, wait time.
 	}
 	if o.GGUFFile != "" {
 		args = append(args, "--gguf-file", o.GGUFFile)
+	}
+	if o.Vision {
+		args = append(args, "--vision", "--mmproj-file", o.MMProjFile)
 	}
 	if o.Backend == "native" {
 		if p.GGUF == nil {

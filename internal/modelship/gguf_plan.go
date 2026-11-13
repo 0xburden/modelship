@@ -16,17 +16,20 @@ type ArtifactPin struct {
 	SHA256 string `json:"sha256"`
 	URL    string `json:"url,omitempty"`
 }
-type GGUFSpec struct {
+type GGUFVisionSpec struct {
 	File     ArtifactPin  `json:"file"`
 	Metadata GGUFMetadata `json:"metadata"`
-	Runtime  string       `json:"runtime"`
+}
+
+type GGUFSpec struct {
+	Vision   *GGUFVisionSpec `json:"vision,omitempty"`
+	File     ArtifactPin     `json:"file"`
+	Metadata GGUFMetadata    `json:"metadata"`
+	Runtime  string          `json:"runtime"`
 }
 
 func ggufTarget(repo, revision, file string) (ArtifactPin, error) {
-	if repo != ggufRepo || revision != ggufRevision || file != ggufFilename {
-		return ArtifactPin{}, fmt.Errorf("experimental GGUF supports only %s @ %s with explicit --gguf-file %s", ggufRepo, ggufRevision, ggufFilename)
-	}
-	return ArtifactPin{Name: ggufFilename, Size: 16564259744, SHA256: "1bce504dfecd84153666928a41d8a66706f0158d3a317bc5196b72819d7dc529"}, nil
+	return ggufArtifact(repo, revision, file, false)
 }
 func ggufOnly(m Model) bool {
 	gguf, safe := false, false
@@ -36,9 +39,7 @@ func ggufOnly(m Model) bool {
 	}
 	return gguf && !safe
 }
-func ggufModelPath(p Plan) string {
-	return filepath.Join(p.ModelCacheDir, "modelship-gguf", strings.ReplaceAll(p.Model, "/", "--"), p.Revision, p.GGUF.File.Name)
-}
+func ggufModelPath(p Plan) string { return ggufArtifactPath(p, p.GGUF.File.Name) }
 func validateGGUFPlan(p Plan) error {
 	if p.GGUF == nil {
 		return fmt.Errorf("missing GGUF deployment specification")
@@ -47,8 +48,26 @@ func validateGGUFPlan(p Plan) error {
 	if e != nil {
 		return e
 	}
-	if p.Backend != "native" || p.Runtime != "llama.cpp" || p.RecipeID != "qwen35-gguf-text" || !p.DisableThinking || !p.TemplateCompletions || len(p.Files) != 1 || p.Files[0] != pin.Name || p.WeightBytes != pin.Size || p.Task != "text-generation" || p.GGUF.File.Size != pin.Size || p.GGUF.File.SHA256 != pin.SHA256 || p.GGUF.Metadata.Architecture != "qwen35" || p.GGUF.Metadata.TensorBytes <= 0 || p.GGUF.Metadata.TensorBytes > pin.Size || p.WeightResidentBytes != p.GGUF.Metadata.TensorBytes || p.Context < 128 || p.Context > 32768 || !filepath.IsAbs(p.ModelCacheDir) {
+	if p.Backend != "native" || p.Runtime != "llama.cpp" || p.RecipeID != "qwen35-gguf-text" || !p.DisableThinking || !p.TemplateCompletions || len(p.Files) < 1 || p.Files[0] != pin.Name || p.Task != "text-generation" || p.GGUF.File.Size != pin.Size || p.GGUF.File.SHA256 != pin.SHA256 || p.GGUF.Metadata.Architecture != "qwen35" || p.GGUF.Metadata.TensorBytes <= 0 || p.GGUF.Metadata.TensorBytes > pin.Size || p.Context < 128 || p.Context > 32768 || !filepath.IsAbs(p.ModelCacheDir) {
 		return fmt.Errorf("invalid GGUF deployment policy/budgets")
+	}
+	bytes, resident := ggufBudgets(p.GGUF)
+	selected := ggufSelectedArtifacts(p.GGUF)
+	if p.WeightBytes != bytes || p.WeightResidentBytes != resident || len(p.Files) != len(selected) {
+		return fmt.Errorf("GGUF selected artifact budgets do not match saved metadata")
+	}
+	for i, pin := range selected {
+		if p.Files[i] != pin.Name {
+			return fmt.Errorf("GGUF artifact list mismatch")
+		}
+	}
+	if p.GGUF.Vision != nil {
+		if p.GGUF.Runtime != llamaJammyRuntime {
+			return fmt.Errorf("vision requires the reviewed Ubuntu22.04 runtime profile")
+		}
+		if e := validateGGUFVision(p.GGUF.Vision); e != nil {
+			return e
+		}
 	}
 	if _, e := loadLlamaRuntime(p.GGUF.Runtime); e != nil {
 		return e
@@ -56,7 +75,7 @@ func validateGGUFPlan(p Plan) error {
 	return nil
 }
 func buildGGUFPlan(m Model, h Host, o Options) (Plan, error) {
-	p := Plan{Schema: 1, Backend: o.Backend, Model: m.Hub.ID, Revision: m.Hub.SHA, License: m.Hub.CardData.License, Name: o.Name, Port: o.Port, Context: o.Context, Task: "text-generation", Runtime: "llama.cpp", NativeLoader: "llama.cpp", RecipeID: "qwen35-gguf-text", RecipeStatus: "experimental", DisableThinking: true, TemplateCompletions: true, DType: "GGUF UD-Q4_K_M", GGUF: m.GGUF, GPUMode: "native", GPUCount: len(h.GPUs), Listen: o.Listen, APIKeyFile: o.APIKeyFile, ModelCacheDir: h.ModelCacheDir}
+	p := Plan{Schema: 1, Backend: o.Backend, Model: m.Hub.ID, Revision: m.Hub.SHA, License: m.Hub.CardData.License, Name: o.Name, Port: o.Port, Context: o.Context, Task: "text-generation", Runtime: "llama.cpp", NativeLoader: "llama.cpp", RecipeID: "qwen35-gguf-text", RecipeStatus: "experimental", DisableThinking: true, TemplateCompletions: true, DType: "GGUF " + strings.TrimSuffix(strings.TrimPrefix(o.GGUFFile, "Qwen3.8-27B-"), ".gguf"), GGUF: m.GGUF, GPUMode: "native", GPUCount: len(h.GPUs), Listen: o.Listen, APIKeyFile: o.APIKeyFile, ModelCacheDir: h.ModelCacheDir}
 	if o.Backend != "native" || o.GPUMode != "" && o.GPUMode != "auto" {
 		return p, fmt.Errorf("GGUF is native-only; Docker GPU options are not supported")
 	}
@@ -64,13 +83,23 @@ func buildGGUFPlan(m Model, h Host, o Options) (Plan, error) {
 		return p, fmt.Errorf("GGUF does not execute repository Python; research/code flags do not apply to this recipe")
 	}
 	if o.Task != "auto" && o.Task != "" && o.Task != "text-generation" {
-		return p, fmt.Errorf("first GGUF adapter is text-only; vision/projector/MTP selection is not enabled")
+		return p, fmt.Errorf("GGUF produces text only; image understanding uses --vision, not image/video generation tasks")
 	}
 	if o.GGUFFile == "" || m.GGUF == nil {
 		return p, fmt.Errorf("select --gguf-file %s; a bounded GGUF header probe is required", ggufFilename)
 	}
-	if _, e := ggufTarget(m.Hub.ID, m.Hub.SHA, o.GGUFFile); e != nil {
+	if o.Vision != (m.GGUF.Vision != nil) || (!o.Vision && o.MMProjFile != "") {
+		return p, fmt.Errorf("vision requires explicit --vision --mmproj-file selection and reviewed projector header inspection")
+	}
+	if o.Vision && (o.MMProjFile == "" || o.MMProjFile != m.GGUF.Vision.File.Name) {
+		return p, fmt.Errorf("select the reviewed --mmproj-file %s", ggufProjectorFile)
+	}
+	pin, e := ggufTarget(m.Hub.ID, m.Hub.SHA, o.GGUFFile)
+	if e != nil {
 		return p, e
+	}
+	if pin != m.GGUF.File {
+		return p, fmt.Errorf("selected GGUF differs from inspected immutable artifact")
 	}
 	if len(p.Name) > 63 || !containerName.MatchString(p.Name) || p.Port < 1024 || p.Port > 65535 || p.Context < 128 || p.Context > 32768 || int64(p.Context) > m.GGUF.Metadata.Context {
 		return p, fmt.Errorf("invalid GGUF name/port/context (context range 128–32768, also bounded by model metadata)")
@@ -94,9 +123,11 @@ func buildGGUFPlan(m Model, h Host, o Options) (Plan, error) {
 	if !driverAtLeast(p.GPU.Driver, 570, 26) || !computeAtLeast(p.GPU.Compute, 8, 0) {
 		p.Blockers = append(p.Blockers, "pinned GGUF CUDA12.8 runtime requires driver>=570.26 and compute capability>=8.0")
 	}
-	p.Files = []string{m.GGUF.File.Name}
-	p.WeightBytes = m.GGUF.File.Size
-	p.WeightResidentBytes = m.GGUF.Metadata.TensorBytes
+	p.Files = nil
+	for _, pin := range ggufSelectedArtifacts(m.GGUF) {
+		p.Files = append(p.Files, pin.Name)
+	}
+	p.WeightBytes, p.WeightResidentBytes = ggufBudgets(m.GGUF)
 	p.WeightMemoryBasis = "GGUF encoded tensor-byte full-GPU placement budget; conservative for fixed CPU tensors, not measured VRAM or a peak guarantee"
 	need := (p.WeightResidentBytes + (1 << 20) - 1) / (1 << 20)
 	p.WeightsFitTotal = need <= p.GPU.TotalMiB
@@ -109,6 +140,10 @@ func buildGGUFPlan(m Model, h Host, o Options) (Plan, error) {
 	// runtime/recurrent-state/activation allowance. This is not a fit guarantee.
 	kv := meta.Layers * int64(p.Context) * meta.KVHeads * (meta.KeyLength + meta.ValueLength) * 2
 	p.EstimatedVRAMMiB = need + (kv+(1<<20)-1)/(1<<20) + 8192
+	if m.GGUF.Vision != nil {
+		p.EstimatedVRAMMiB += 2048
+		p.Warnings = append(p.Warnings, "Vision: one uploaded PNG/JPEG, 4 MiB/4,194,304-pixel input budget, at most 1024 image tokens, with upstream preprocessing/resizing; image tokens share the fixed context. The extra 2 GiB activation allowance is a heuristic, not measured peak memory.")
+	}
 	if p.EstimatedVRAMMiB > p.GPU.FreeMiB*90/100 {
 		if o.AllowRisk {
 			p.Warnings = append(p.Warnings, "OVERRIDDEN: conservative GGUF runtime/context budget")
@@ -131,7 +166,7 @@ func buildGGUFPlan(m Model, h Host, o Options) (Plan, error) {
 	}
 	p.Warnings = append(p.Warnings, fmt.Sprintf("Runtime %s requires system GLIBC_%s / GLIBCXX_%s; checked before runtime downloads, with no host library replacement", runtimeSpec.ID, runtimeSpec.MinimumGLIBC, runtimeSpec.MinimumGLIBCXX))
 	p.Warnings = append(p.Warnings, h.Warnings...)
-	p.Warnings = append(p.Warnings, "Experimental text-only GGUF: no independent live GPU/model inference validation yet; no implicit mmproj, MTP, calibration, quant conversion or CPU fallback", "llama.cpp b12110 CUDA12.8 is separately checksum-pinned; no Python/PyTorch/driver installation or replacement", "Full GPU layer placement, device CUDA0, one slot, fixed context and --fit off are explicit; fixed backend CPU metadata/tensors can remain on host", "Source file bytes, encoded tensor-byte budget and runtime/host memory are distinct; context/recurrent state/temporary allocation may still OOM")
+	p.Warnings = append(p.Warnings, "Experimental GGUF: no independent live GPU/model inference validation for this artifact/mode; no implicit projector, MTP, calibration, quant conversion or CPU fallback", "llama.cpp b12110 CUDA12.8 is separately checksum-pinned; no Python/PyTorch/driver installation or replacement", "Full GPU layer placement, device CUDA0, one slot, fixed context and --fit off are explicit; fixed backend CPU metadata/tensors can remain on host", "Source file bytes, encoded tensor-byte budget and runtime/host memory are distinct; context/recurrent state/temporary allocation may still OOM")
 	if e := validateGGUFPlan(p); e != nil {
 		return p, e
 	}

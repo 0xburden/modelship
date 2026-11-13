@@ -28,9 +28,10 @@ type TorchInfo struct {
 	PythonVersion  string `json:"python_version,omitempty"`
 }
 
-// Schema 5 also records the GGUF runtime/artifact boundary.
+// Schema 6 records the vision/projector execution boundary; schema-5 GGUF
+// text deployments remain readable without changing their runtime identity.
 // Older CLIs must reject it instead of ignoring these execution constraints.
-const nativeSchemaVersion = 5
+const nativeSchemaVersion = 6
 
 type NativeConfig struct {
 	RuntimeBinary    string        `json:"runtime_binary,omitempty"`
@@ -120,13 +121,16 @@ func nativeConfig(name string) (NativeConfig, string, error) {
 	if err = readJSONFile(filepath.Join(dir, "config.json"), &cfg); err != nil {
 		return cfg, dir, fmt.Errorf("read native deployment %s: %w", name, err)
 	}
-	if (cfg.Schema != 1 && cfg.Schema != 2 && cfg.Schema != 3 && cfg.Schema != 4 && cfg.Schema != nativeSchemaVersion) || cfg.Plan.Backend != "native" || cfg.Plan.Name != name || !commitPattern.MatchString(cfg.Plan.Revision) || cfg.Plan.Port < 1024 || cfg.Plan.Port > 65535 {
+	if (cfg.Schema != 1 && cfg.Schema != 2 && cfg.Schema != 3 && cfg.Schema != 4 && cfg.Schema != 5 && cfg.Schema != nativeSchemaVersion) || cfg.Plan.Backend != "native" || cfg.Plan.Name != name || !commitPattern.MatchString(cfg.Plan.Revision) || cfg.Plan.Port < 1024 || cfg.Plan.Port > 65535 {
 		return cfg, dir, fmt.Errorf("invalid native deployment metadata")
 	}
 	if cfg.Plan.GGUF == nil && (cfg.Plan.Runtime == "llama.cpp" || cfg.Plan.NativeLoader == "llama.cpp" || cfg.RuntimeBinary != "" || len(cfg.RuntimeFiles) > 0 || len(cfg.RuntimeLibraries) > 0) {
 		return cfg, dir, fmt.Errorf("GGUF runtime fields require a matching format-specific plan")
 	}
 	if cfg.Plan.GGUF != nil {
+		if cfg.Plan.GGUF.Vision != nil && cfg.Schema < 6 {
+			return cfg, dir, fmt.Errorf("vision requires native schema 6")
+		}
 		if cfg.Schema < 5 {
 			return cfg, dir, fmt.Errorf("GGUF requires native schema 5")
 		}

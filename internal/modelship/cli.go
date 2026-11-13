@@ -20,7 +20,7 @@ const help = `modelship — NVIDIA model deployment (Linux amd64)
 Commands:
   launch                             Guided model setup (also the interactive default)
   catalog [--json]                    List implemented, experimental, and planned recipes
-  inspect MODEL [--gguf-file FILE] [--json]              Inspect metadata without a GPU or model download
+  inspect MODEL [--gguf-file FILE] [--mmproj-file FILE] [--json]              Inspect metadata without a GPU or model download
   doctor                             Inspect NVIDIA GPUs and Docker
   setup                              Print prerequisite installation guidance
   plan MODEL [options]               Resolve weights and print a deployment plan
@@ -31,6 +31,7 @@ Commands:
   auth-keygen [--file PATH]          Create a private API key (never printed)
   configure --backend native --name NAME --listen IP --api-key-file PATH
   version
+  notices                            Print bundled third-party Go dependency notices
 
 MODEL is org/repo or https://huggingface.co/org/repo.
 
@@ -42,7 +43,8 @@ Plan/deploy options:
   --experimental     Explicitly opt in to an experimental implemented recipe
   --research         Acknowledge non-commercial research/evaluation use (Qwen Image)
   --trust-model-code Explicit approval of the pinned, hash-verified MOSS Python code
-  --gguf-file FILE  Explicit GGUF variant; no automatic selection or conversion
+  --gguf-file FILE  Explicit reviewed GGUF variant; no automatic conversion
+  --vision --mmproj-file FILE  Opt in to the reviewed image-understanding projector
   --weights-repo ID  Explicit official WAN Diffusers conversion; never inferred
   --name modelship  --allow-risk   --gpu-mode auto|nvidia|cdi (Docker)
   --json            Print machine-readable plan (plan only)
@@ -86,6 +88,16 @@ func Run(args []string, version string) error {
 		return catalogCommand(args[1:])
 	case "inspect":
 		return inspectCommand(ctx, args[1:])
+	case "notices":
+		if len(args) != 1 {
+			return fmt.Errorf("notices accepts no arguments")
+		}
+		b, e := assets.ReadFile("assets/third_party_notices.txt")
+		if e != nil {
+			return e
+		}
+		fmt.Print(string(b))
+		return nil
 	case "version":
 		fmt.Println(version)
 		return nil
@@ -162,6 +174,8 @@ func planCommand(ctx context.Context, action string, args []string) error {
 	fs := flag.NewFlagSet(action, flag.ContinueOnError)
 	o := Options{}
 	fs.StringVar(&o.Backend, "backend", "docker", "docker or native")
+	fs.BoolVar(&o.Vision, "vision", false, "enable reviewed GGUF image understanding (explicit projector required)")
+	fs.StringVar(&o.MMProjFile, "mmproj-file", "", "explicit reviewed GGUF vision projector filename")
 	fs.StringVar(&o.GGUFFile, "gguf-file", "", "explicit approved standalone GGUF filename (native experimental only)")
 	fs.StringVar(&o.Listen, "listen", "", "native IPv4 listener (default 127.0.0.1); 0.0.0.0 requires --api-key-file")
 	fs.StringVar(&o.APIKeyFile, "api-key-file", "", "private bearer key file; never a literal key value")
@@ -235,6 +249,16 @@ func planCommand(ctx context.Context, action string, args []string) error {
 			return err
 		}
 	}
+	if o.Vision || o.MMProjFile != "" {
+		if !o.Vision || o.MMProjFile == "" {
+			return fmt.Errorf("use --vision and --mmproj-file together")
+		}
+		hub := NewHub()
+		hub.Token = os.Getenv("HF_TOKEN")
+		if err = hub.inspectGGUFProjector(ctx, &model, o.MMProjFile); err != nil {
+			return err
+		}
+	}
 	if o.Backend == "native" {
 		InspectModelCache(&host, model)
 	}
@@ -290,7 +314,13 @@ func writePlan(w io.Writer, p Plan) {
 		fmt.Fprintf(w, "Model cache: %s\n", p.ModelCacheDir)
 	}
 	if p.GGUF != nil {
-		fmt.Fprintf(w, "GGUF file:   %s (%d bytes); SHA-256 %s\nRuntime pin: %s; CUDA0/all GPU layers; auto-fit disabled; text-only\n", p.GGUF.File.Name, p.GGUF.File.Size, p.GGUF.File.SHA256, p.GGUF.Runtime)
+		mode := "text-only"
+		if p.GGUF.Vision != nil {
+			v := p.GGUF.Vision
+			mode = "text + one uploaded image (experimental)"
+			fmt.Fprintf(w, "Projector:   %s (%d bytes); SHA-256 %s; %.3f GiB encoded tensor budget\n", v.File.Name, v.File.Size, v.File.SHA256, float64(v.Metadata.TensorBytes)/(1<<30))
+		}
+		fmt.Fprintf(w, "GGUF file:   %s (%d bytes); SHA-256 %s\nRuntime pin: %s; CUDA0/all GPU layers; auto-fit disabled; %s\n", p.GGUF.File.Name, p.GGUF.File.Size, p.GGUF.File.SHA256, p.GGUF.Runtime, mode)
 	}
 	if p.Context > 0 {
 		fmt.Fprintf(w, "Context:     %d tokens\n", p.Context)

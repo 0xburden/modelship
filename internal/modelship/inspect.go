@@ -43,8 +43,8 @@ type Inspection struct {
 func inspectModel(m Model) (Inspection, error) {
 	report := Inspection{GGUF: m.GGUF, Model: m.Hub.ID, Revision: m.Hub.SHA, Task: m.Hub.PipelineTag, Library: m.Hub.Library, Gated: m.Hub.Gated, License: m.Hub.CardData.License, SourceConfig: m.SourceConfig, ConfigurationReadable: m.SourceConfig != "" && len(m.InspectionWarnings) == 0, Architectures: m.Config.Architectures, Pipeline: m.Index.Class, TextConfig: m.Config.TextConfig, RecipeStatus: "unsupported"}
 	if m.GGUF != nil {
-		report.SelectedWeightBytes = m.GGUF.File.Size
-		report.Warnings = append(report.Warnings, "Repository artifact totals include other quantizations and auxiliaries; deployment selects only the explicitly chosen GGUF file, not every listed artifact.")
+		report.SelectedWeightBytes, _ = ggufBudgets(m.GGUF)
+		report.Warnings = append(report.Warnings, "Repository artifact totals include other quantizations and auxiliaries; deployment selects only the explicitly chosen language GGUF and optional reviewed projector, not every listed artifact.")
 	}
 	report.Warnings = append(report.Warnings, m.InspectionWarnings...)
 	groups := map[string]*WeightGroup{}
@@ -100,6 +100,7 @@ func inspectModel(m Model) (Inspection, error) {
 }
 func inspectCommand(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("inspect", flag.ContinueOnError)
+	mmprojFile := fs.String("mmproj-file", "", "inspect a reviewed vision projector paired with --gguf-file")
 	ggufFile := fs.String("gguf-file", "", "inspect a selected approved GGUF header without tensor payloads")
 	revision := fs.String("revision", "main", "Hugging Face revision")
 	asJSON := fs.Bool("json", false, "structured inspection")
@@ -127,6 +128,11 @@ func inspectCommand(ctx context.Context, args []string) error {
 			return err
 		}
 	}
+	if *mmprojFile != "" {
+		if err = hub.inspectGGUFProjector(ctx, &m, *mmprojFile); err != nil {
+			return err
+		}
+	}
 	report, err := inspectModel(m)
 	if err != nil {
 		return err
@@ -136,7 +142,11 @@ func inspectCommand(ctx context.Context, args []string) error {
 	}
 	fmt.Printf("Model:       %s\nRevision:    %s\nRepo task:   %s\nArchitecture:%v\nPipeline:    %s\nRecipe:      %s\nWeight files: %.2f GiB across listed artifacts\n", report.Model, report.Revision, report.Task, report.Architectures, report.Pipeline, report.RecipeStatus, float64(report.WeightArtifactBytes)/(1024*1024*1024))
 	if report.GGUF != nil {
-		fmt.Printf("Selected GGUF: %s · %.2f GiB; %d tensors, %d encoded tensor bytes\n", report.GGUF.File.Name, float64(report.SelectedWeightBytes)/(1<<30), report.GGUF.Metadata.TensorCount, report.GGUF.Metadata.TensorBytes)
+		fmt.Printf("Selected GGUF: %s · %.2f GiB; %d tensors, %d encoded tensor bytes\n", report.GGUF.File.Name, float64(report.GGUF.File.Size)/(1<<30), report.GGUF.Metadata.TensorCount, report.GGUF.Metadata.TensorBytes)
+	}
+	if report.GGUF != nil && report.GGUF.Vision != nil {
+		v := report.GGUF.Vision
+		fmt.Printf("Selected projector: %s · %.3f GiB; %d tensors, %d encoded tensor bytes; combined selected files %d bytes\n", v.File.Name, float64(v.File.Size)/(1<<30), v.Metadata.TensorCount, v.Metadata.TensorBytes, report.SelectedWeightBytes)
 	}
 	if report.Recipe != nil {
 		r := report.Recipe

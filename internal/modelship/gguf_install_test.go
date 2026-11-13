@@ -204,6 +204,13 @@ func TestGGUFNativeStateBoundaryAndImmutableArtifacts(t *testing.T) {
 			t.Fatal("legacy/future CLI schema accepted GGUF state", schema)
 		}
 	}
+	legacy := NativeConfig{Schema: 5, Plan: p}
+	if e = writeJSONFile(filepath.Join(dir, "config.json"), legacy); e != nil {
+		t.Fatal(e)
+	}
+	if _, _, e = nativeConfig(p.Name); e != nil {
+		t.Fatal("healthy schema-5 GGUF compatibility lost", e)
+	}
 	cfg := NativeConfig{Schema: nativeSchemaVersion, Plan: p}
 	if e = writeJSONFile(filepath.Join(dir, "config.json"), cfg); e != nil {
 		t.Fatal(e)

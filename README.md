@@ -1,8 +1,10 @@
+> **Unreleased feature branch:** reviewed GGUF quant menus (UD-Q4_K_M default), optional one-image vision, and Esc-back navigation are described in [GGUF.md](GGUF.md). Published **alpha.6 remains unchanged/text-only**. Actual vision GPU inference is unvalidated.
+
 # modelship
 
 A GPU-first model deployment CLI: inspect a Hugging Face repository and the local NVIDIA server, review a plan, then deploy a pinned model revision through Docker or a native runtime.
 
-**GGUF repair in v0.3.0-alpha.6:** an experimental, explicitly pinned text-only GGUF/llama.cpp adapter is described in [GGUF.md](GGUF.md). Alpha.6 rebuilds the native core for Ubuntu22.04 (glibc2.35/GLIBCXX3.4.30); alpha.5’s upstream binary is incompatible with that userspace. Actual GPU/model inference is still unvalidated. Vision remains a separate follow-up.
+**GGUF repair in v0.3.0-alpha.6:** an experimental, explicitly pinned text-only GGUF/llama.cpp adapter is described in [GGUF.md](GGUF.md). Alpha.6 rebuilds the native core for Ubuntu22.04 (glibc2.35/GLIBCXX3.4.30); alpha.5’s upstream binary is incompatible with that userspace. Text success is user-reported, not independently measured; actual vision inference remains unvalidated and is implemented only on the unreleased branch.
 
 **Early MVP, not a universal model converter or production control plane.** Go handles orchestration; vLLM (Docker), Transformers (native text), and a small Python/Diffusers service perform inference. No agent API or backend is required.
 
@@ -298,7 +300,7 @@ Forward the selected port with Thunder as usual and add the resulting `https://I
 
 All native HTTP paths are protected when enabled: health, model discovery, inference, video status/content, docs/OpenAPI, and unknown routes. Missing/malformed/wrong credentials return401 before body parsing or inference. Query-string/cookie keys are not accepted. Authenticated responses use `Cache-Control: no-store`; CLI readiness/status/text smoke authenticate automatically and refuse redirects. An ordinary browser/curl request without a header returning401 is **expected**.
 
-Keys must be owned, regular **0600** files with32–128 base64url characters; the generator emits43 characters plus a newline and refuses overwrites. Generation needs a private parent directory (created0700 if absent). Symlinks, FIFOs, insecure permissions and invalid keys fail closed before weight loading. Only the absolute path—not the key value—is stored in authentication-aware native metadata or the worker environment/argv. New source builds use schema5 (GGUF/runtime boundary); released alpha.2–alpha.4 used schema4. Older CLIs reject newer schemas; keep using the updated CLI after migration. Legacy schemas1–3 without access settings still load and remain loopback-only.
+Keys must be owned, regular **0600** files with32–128 base64url characters; the generator emits43 characters plus a newline and refuses overwrites. Generation needs a private parent directory (created0700 if absent). Symlinks, FIFOs, insecure permissions and invalid keys fail closed before weight loading. Only the absolute path—not the key value—is stored in authentication-aware native metadata or the worker environment/argv. Unreleased source builds use schema6 (vision/projector boundary); alpha.5–alpha.6 used schema5, alpha.2–alpha.4 used schema4. Older CLIs reject newer schemas; keep using the updated CLI after migration. Legacy schemas1–3 without access settings still load and remain loopback-only.
 
 **Rotation requires a stop/configure/start** with a newly generated key file; a running worker holds the startup key digest, so changing/deleting the file does not revoke that active key immediately. A missing key prevents a new start, but does not prevent status/stop/uninstall. Uninstall does not remove the default external key file.
 
@@ -365,3 +367,5 @@ NATIVE.md                      Native deployment guide
 VALIDATION.md                  GPU baseline results and outstanding checks
 MODEL_SUPPORT.md               New-model profiles, size/license blockers, LoRA roadmap
 ```
+
+Third-party terminal-library copyright/license notices are bundled in the CLI (`modelship notices`); they do not license Modelship itself.
