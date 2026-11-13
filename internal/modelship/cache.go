@@ -85,7 +85,10 @@ func InspectModelCache(h *Host, m Model) {
 	}
 	files, _ := weightFiles(m.Hub.Siblings, recipe.Kind != "text")
 	if m.GGUF != nil {
-		files = []string{m.GGUF.File.Name}
+		files = nil
+		for _, pin := range ggufSelectedArtifacts(m.GGUF) {
+			files = append(files, pin.Name)
+		}
 	}
 	selected := map[string]bool{}
 	for _, name := range files {
@@ -99,7 +102,7 @@ func InspectModelCache(h *Host, m Model) {
 		}
 		path := filepath.Join(snapshot, filepath.FromSlash(file.Name))
 		if m.GGUF != nil {
-			path = ggufModelPath(Plan{Model: m.Hub.ID, Revision: m.Hub.SHA, ModelCacheDir: h.ModelCacheDir, GGUF: m.GGUF})
+			path = ggufArtifactPath(Plan{Model: m.Hub.ID, Revision: m.Hub.SHA, ModelCacheDir: h.ModelCacheDir, GGUF: m.GGUF}, file.Name)
 		}
 		st, err := os.Stat(path)
 		if err == nil && st.Mode().IsRegular() && st.Size() == file.Bytes() {

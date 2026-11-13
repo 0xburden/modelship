@@ -31,15 +31,28 @@ func llamaEnv(cfg NativeConfig, dir string) []string {
 	return []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=" + dir, "TMPDIR=" + dir, "CUDA_VISIBLE_DEVICES=" + cfg.Plan.GPU.UUID, "LD_LIBRARY_PATH=" + strings.Join(libs, ":")}
 }
 func llamaArgs(p Plan, port int, keyPath string) []string {
-	return []string{"--model", ggufModelPath(p), "--alias", p.Model, "--host", "127.0.0.1", "--port", strconv.Itoa(port), "--api-key-file", keyPath,
+	args := []string{"--model", ggufModelPath(p), "--alias", p.Model, "--host", "127.0.0.1", "--port", strconv.Itoa(port), "--api-key-file", keyPath,
 		"--device", "CUDA0", "--gpu-layers", "all", "--split-mode", "none", "--main-gpu", "0", "--fit", "off", "--ctx-size", strconv.Itoa(p.Context), "--no-context-shift", "--parallel", "1",
 		"--batch-size", "128", "--ubatch-size", "128", "--threads", strconv.Itoa(min(8, max(1, runtime.NumCPU()))), "--cache-type-k", "f16", "--cache-type-v", "f16",
 		"--jinja", "--reasoning", "off", "--no-reasoning-preserve", "--spec-type", "none", "--no-mmproj", "--no-webui", "--no-agent", "--no-ui-mcp-proxy"}
+	if p.GGUF != nil && p.GGUF.Vision != nil {
+		filtered := args[:0]
+		for _, v := range args {
+			if v != "--no-mmproj" {
+				filtered = append(filtered, v)
+			}
+		}
+		args = filtered
+		// Both files are verified local paths; no HF repository/URL or implicit
+		// projector download options are passed to the private server.
+		args = append(args, "--mmproj", ggufArtifactPath(p, p.GGUF.Vision.File.Name), "--mmproj-offload", "--mmproj-device", "CUDA0", "--image-max-tokens", strconv.Itoa(visionImageMaxTokens), "--mtmd-batch-max-tokens", "256")
+	}
+	return args
 }
 
 type ggufMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string          `json:"role"`
+	Content json.RawMessage `json:"content"`
 }
 type ggufTextRequest struct {
 	Model       string        `json:"model,omitempty"`
@@ -114,13 +127,19 @@ func (g *ggufGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if !g.ready.Load() {
 			status = 503
 		}
-		g.json(w, status, map[string]any{"ready": g.ready.Load(), "model": g.plan.Model, "revision": g.plan.Revision, "task": "text-generation", "recipe": g.plan.RecipeID, "runtime": "llama.cpp", "run_id": g.runID})
+		g.json(w, status, map[string]any{"ready": g.ready.Load(), "model": g.plan.Model, "revision": g.plan.Revision, "task": "text-generation", "recipe": g.plan.RecipeID, "runtime": "llama.cpp", "run_id": g.runID, "input_modalities": g.inputModalities()})
+	case "/v1/capabilities":
+		if r.Method != "GET" {
+			g.fail(w, 405, "method not allowed")
+			return
+		}
+		g.json(w, 200, g.capabilities())
 	case "/v1/models":
 		if r.Method != "GET" {
 			g.fail(w, 405, "method not allowed")
 			return
 		}
-		g.json(w, 200, map[string]any{"object": "list", "data": []map[string]string{{"id": g.plan.Model, "object": "model", "owned_by": "modelship"}}})
+		g.json(w, 200, map[string]any{"object": "list", "data": []map[string]any{{"id": g.plan.Model, "object": "model", "owned_by": "modelship", "input_modalities": g.inputModalities()}}})
 	case "/v1/chat/completions", "/v1/completions":
 		if r.Method != "POST" {
 			g.fail(w, 405, "method not allowed")
@@ -128,7 +147,7 @@ func (g *ggufGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		g.generate(w, r, r.URL.Path == "/v1/chat/completions")
 	default:
-		g.fail(w, 404, "route not available; this GGUF adapter is text-only")
+		g.fail(w, 404, "route not available on this GGUF chat adapter")
 	}
 }
 func (g *ggufGateway) generate(w http.ResponseWriter, r *http.Request, chat bool) {
@@ -143,9 +162,13 @@ func (g *ggufGateway) generate(w http.ResponseWriter, r *http.Request, chat bool
 		g.fail(w, 503, "GPU busy; retry after the current request finishes")
 		return
 	}
-	data, e := io.ReadAll(io.LimitReader(r.Body, (1<<20)+1))
-	if e != nil || len(data) > 1<<20 {
-		g.fail(w, 413, "request exceeds 1 MiB")
+	limit := int64(1 << 20)
+	if g.visionEnabled() {
+		limit = 8 << 20
+	}
+	data, e := io.ReadAll(io.LimitReader(r.Body, limit+1))
+	if e != nil || int64(len(data)) > limit {
+		g.fail(w, 413, "request exceeds the deployment body limit")
 		return
 	}
 	var input ggufTextRequest
@@ -180,24 +203,28 @@ func (g *ggufGateway) generate(w http.ResponseWriter, r *http.Request, chat bool
 	messages := input.Messages
 	if chat {
 		if input.Prompt != nil || len(messages) == 0 || len(messages) > 128 {
-			g.fail(w, 422, "chat requires text messages only")
+			g.fail(w, 422, "chat requires bounded text/image messages")
 			return
-		}
-		for _, m := range messages {
-			if !contains([]string{"system", "user", "assistant"}, m.Role) || strings.TrimSpace(m.Content) == "" || len(m.Content) > 32768 {
-				g.fail(w, 422, "invalid text chat message")
-				return
-			}
 		}
 	} else {
 		if len(input.Messages) != 0 || input.Prompt == nil || strings.TrimSpace(*input.Prompt) == "" || len(*input.Prompt) > 65536 {
 			g.fail(w, 422, "completion requires a text prompt only")
 			return
 		}
-		// This instruct model uses a templated user turn, not raw base continuation.
-		messages = []ggufMessage{{Role: "user", Content: *input.Prompt}}
+		content, _ := json.Marshal(*input.Prompt)
+		messages = []ggufMessage{{Role: "user", Content: content}}
 	}
-	body := map[string]any{"model": g.plan.Model, "messages": messages, "max_tokens": tokens, "temperature": temp, "top_p": top, "stream": false, "n": 1, "top_k": 0, "min_p": 0, "chat_template_kwargs": map[string]bool{"enable_thinking": false}}
+	var normalized []map[string]any
+	if chat {
+		normalized, e = validateGGUFMessages(messages, g.visionEnabled())
+		if e != nil {
+			g.fail(w, 422, e.Error())
+			return
+		}
+	} else {
+		normalized = []map[string]any{{"role": "user", "content": *input.Prompt}}
+	}
+	body := map[string]any{"model": g.plan.Model, "messages": normalized, "max_tokens": tokens, "temperature": temp, "top_p": top, "stream": false, "n": 1, "top_k": 0, "min_p": 0, "chat_template_kwargs": map[string]bool{"enable_thinking": false}}
 	if input.Seed != nil {
 		body["seed"] = *input.Seed
 	}

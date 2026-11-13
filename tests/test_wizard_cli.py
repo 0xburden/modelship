@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 import time
+import termios
 import unittest
 
 BINARY=os.environ.get('MODELSHIP_TEST_BINARY','')
@@ -47,6 +48,36 @@ class WizardCLITests(unittest.TestCase):
                     if process.poll() is None:
                         process.kill();process.wait(timeout=5)
                     os.close(master)
+
+    def test_bare_escape_back_and_ctrl_c_restore_terminal_without_network(self):
+        master,slave=pty.openpty()
+        original=termios.tcgetattr(slave)
+        process=subprocess.Popen([BINARY,'launch'],stdin=slave,stdout=slave,stderr=slave)
+        data=bytearray()
+        def read_until(marker):
+            deadline=time.monotonic()+5
+            while marker not in data and time.monotonic()<deadline:
+                ready,_,_=select.select([master],[],[],0.1)
+                if ready:
+                    try: chunk=os.read(master,65536)
+                    except OSError: break
+                    if not chunk: break
+                    data.extend(chunk)
+            self.assertIn(marker,data)
+        try:
+            read_until(b'Hugging Face model page')
+            os.write(master,b'org/model\r')
+            read_until(b'Model revision (branch, tag or commit) [main]')
+            os.write(master,b'\x1b')
+            read_until(b'Later selections/approvals were discarded')
+            read_until(b'Hugging Face model page or org/repo [org/model]')
+            self.assertNotIn(b'Inspecting repository',data)
+            os.write(master,b'\x03')
+            self.assertNotEqual(process.wait(timeout=5),0)
+            self.assertEqual(termios.tcgetattr(slave),original)
+        finally:
+            if process.poll() is None: process.kill();process.wait(timeout=5)
+            os.close(master);os.close(slave)
 
 
 if __name__ == '__main__':

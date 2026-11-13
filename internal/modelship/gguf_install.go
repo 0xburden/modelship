@@ -370,16 +370,30 @@ func verifyGGUFInstall(cfg NativeConfig, dir string) error {
 			return fmt.Errorf("invalid runtime manifest path")
 		}
 	}
-	path := ggufModelPath(cfg.Plan)
+	for _, pin := range ggufSelectedArtifacts(cfg.Plan.GGUF) {
+		meta := cfg.Plan.GGUF.Metadata
+		architecture := "qwen35"
+		if cfg.Plan.GGUF.Vision != nil && pin.Name == cfg.Plan.GGUF.Vision.File.Name {
+			meta = cfg.Plan.GGUF.Vision.Metadata
+			architecture = "clip"
+		}
+		if e := verifyCachedGGUF(cfg.Plan, pin, meta, architecture); e != nil {
+			return e
+		}
+	}
+	return nil
+}
+func verifyCachedGGUF(p Plan, pin ArtifactPin, want GGUFMetadata, architecture string) error {
+	path := ggufArtifactPath(p, pin.Name)
 	if e := privateRegular(path); e != nil {
 		return e
 	}
 	st, e := os.Stat(path)
-	if e != nil || st.Size() != cfg.Plan.GGUF.File.Size {
+	if e != nil || st.Size() != pin.Size {
 		return fmt.Errorf("cached GGUF size mismatch")
 	}
 	hash, e := digestFile(path)
-	if e != nil || hash != cfg.Plan.GGUF.File.SHA256 {
+	if e != nil || hash != pin.SHA256 {
 		return fmt.Errorf("cached GGUF digest mismatch; refusing startup")
 	}
 	f, e := os.Open(path)
@@ -387,8 +401,8 @@ func verifyGGUFInstall(cfg NativeConfig, dir string) error {
 		return fmt.Errorf("cannot verify GGUF header")
 	}
 	defer f.Close()
-	meta, e := parseGGUF(st.Size(), func(offset, n int64) ([]byte, error) { b := make([]byte, n); _, e := f.ReadAt(b, offset); return b, e })
-	if e != nil || !reflect.DeepEqual(meta, cfg.Plan.GGUF.Metadata) {
+	meta, e := parseGGUFFor(st.Size(), func(offset, n int64) ([]byte, error) { b := make([]byte, n); _, e := f.ReadAt(b, offset); return b, e }, architecture)
+	if e != nil || !reflect.DeepEqual(meta, want) {
 		return fmt.Errorf("cached GGUF header differs from saved planning metadata")
 	}
 	return nil
@@ -441,9 +455,11 @@ func deployGGUF(ctx context.Context, p Plan, wait time.Duration) error {
 			return e
 		}
 	}
-	missing := p.GGUF.File.Size
-	if st, e := os.Stat(ggufModelPath(p)); e == nil && st.Size() == p.GGUF.File.Size {
-		missing = 0
+	missing := int64(0)
+	for _, pin := range ggufSelectedArtifacts(p.GGUF) {
+		if st, e := os.Stat(ggufArtifactPath(p, pin.Name)); e != nil || st.Size() != pin.Size {
+			missing += pin.Size
+		}
 	}
 	if e = syscall.Statfs(cacheDir, &fs); e != nil || fs.Bsize <= 0 {
 		return fmt.Errorf("cannot inspect GGUF cache filesystem")
@@ -484,10 +500,12 @@ func deployGGUF(ctx context.Context, p Plan, wait time.Duration) error {
 	if e = verifyWeightFitNow(ctx, p); e != nil {
 		return e
 	}
-	fmt.Printf("Downloading only selected pinned GGUF (%d bytes); auxiliary/projector files are excluded.\n", p.GGUF.File.Size)
-	url := "https://huggingface.co/" + p.Model + "/resolve/" + p.Revision + "/" + escapeWeightPath(p.GGUF.File.Name)
-	if e = downloadVerified(ctx, client, url, os.Getenv("HF_TOKEN"), ggufModelPath(p), p.GGUF.File); e != nil {
-		return e
+	for _, pin := range ggufSelectedArtifacts(p.GGUF) {
+		fmt.Printf("Downloading selected pinned artifact %s (%d bytes); no unselected auxiliary files.\n", pin.Name, pin.Size)
+		url := "https://huggingface.co/" + p.Model + "/resolve/" + p.Revision + "/" + escapeWeightPath(pin.Name)
+		if e = downloadVerified(ctx, client, url, os.Getenv("HF_TOKEN"), ggufArtifactPath(p, pin.Name), pin); e != nil {
+			return e
+		}
 	}
 	if e = writeJSONFile(filepath.Join(dir, "config.json"), cfg); e != nil {
 		return e

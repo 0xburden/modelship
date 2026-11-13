@@ -405,7 +405,7 @@
     },
     {
       "id": "qwen35-gguf-text",
-      "name": "Qwen3.8 GGUF text (explicit pinned Q4_K_M artifact)",
+      "name": "Qwen3.8 GGUF chat (reviewed quants; optional vision)",
       "format": "gguf",
       "kind": "text",
       "status": "experimental",
@@ -425,7 +425,7 @@
       "native_loader": "llama.cpp",
       "dtype": "gguf",
       "notes": [
-        "First artifact only: explicit Qwen3.8-27B-UD-Q4_K_M.gguf at the approved revision. Text-only; no auto mmproj/MTP/imatrix selection or CPU fallback.",
+        "Reviewed standalone quantization catalog at the pinned revision; UD-Q4_K_M is the visible wizard default. Optional --vision --mmproj-file mmproj-F16.gguf enables one-image understanding. No implicit projector/MTP/imatrix selection or CPU fallback.",
         "Pinned llama.cpp b12110 CUDA12.8; no PyTorch dependency. Live GPU inference remains unvalidated."
       ]
     }

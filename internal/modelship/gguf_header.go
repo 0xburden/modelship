@@ -18,6 +18,8 @@ import (
 const ggufMaxHeader int64 = 64 << 20
 
 type GGUFMetadata struct {
+	Attributes map[string]string `json:"attributes,omitempty"`
+
 	Architecture string         `json:"architecture"`
 	TensorCount  int            `json:"tensor_count"`
 	TensorBytes  int64          `json:"tensor_bytes"`
@@ -159,9 +161,12 @@ func (g *ggufRead) value(t uint32, tail int64, keep bool) (any, error) {
 func isFinite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
 
 // GGML block sizes are pinned to llama.cpp b12110. Unknown types fail closed.
-var ggufBlocks = map[uint32][2]int64{0: {1, 4}, 1: {1, 2}, 2: {32, 18}, 3: {32, 20}, 6: {32, 22}, 7: {32, 24}, 8: {32, 34}, 9: {32, 36}, 10: {256, 84}, 11: {256, 110}, 12: {256, 144}, 13: {256, 176}, 14: {256, 210}, 15: {256, 292}, 20: {32, 18}, 21: {256, 110}, 23: {256, 136}, 30: {1, 2}}
+var ggufBlocks = map[uint32][2]int64{0: {1, 4}, 1: {1, 2}, 2: {32, 18}, 3: {32, 20}, 6: {32, 22}, 7: {32, 24}, 8: {32, 34}, 9: {32, 36}, 10: {256, 84}, 11: {256, 110}, 12: {256, 144}, 13: {256, 176}, 14: {256, 210}, 15: {256, 292}, 16: {256, 66}, 17: {256, 74}, 18: {256, 98}, 19: {256, 50}, 22: {256, 82}, 29: {256, 56}, 20: {32, 18}, 21: {256, 110}, 23: {256, 136}, 30: {1, 2}}
 
 func parseGGUF(size int64, read func(int64, int64) ([]byte, error)) (GGUFMetadata, error) {
+	return parseGGUFFor(size, read, "qwen35")
+}
+func parseGGUFFor(size int64, read func(int64, int64) ([]byte, error), wanted string) (GGUFMetadata, error) {
 	var out GGUFMetadata
 	g := ggufRead{size: size, read: read}
 	head, e := g.take(24, 0)
@@ -191,7 +196,7 @@ func parseGGUF(size int64, read func(int64, int64) ([]byte, error)) (GGUFMetadat
 		if e != nil {
 			return out, e
 		}
-		keep := key == "general.architecture" || key == "general.type" || key == "general.alignment" || strings.HasPrefix(key, "qwen35.") || strings.HasPrefix(key, "split.")
+		keep := key == "general.architecture" || key == "general.type" || key == "general.alignment" || strings.HasPrefix(key, "qwen35.") || strings.HasPrefix(key, "clip.") || strings.HasPrefix(key, "split.")
 		value, e := g.value(uint32(typ), tail, keep)
 		if e != nil {
 			return out, e
@@ -201,7 +206,7 @@ func parseGGUF(size int64, read func(int64, int64) ([]byte, error)) (GGUFMetadat
 		}
 	}
 	arch, ok := fields["general.architecture"].(string)
-	if !ok || arch != "qwen35" || fields["general.type"] != "model" {
+	if !ok || arch != wanted || (wanted == "qwen35" && fields["general.type"] != "model") {
 		return out, fmt.Errorf("GGUF is not a qwen35 standalone model")
 	}
 	if _, ok = fields["split.count"]; ok {
@@ -300,29 +305,74 @@ func parseGGUF(size int64, read func(int64, int64) ([]byte, error)) (GGUFMetadat
 	out.KVHeads = number("qwen35.attention.head_count_kv")
 	out.KeyLength = number("qwen35.attention.key_length")
 	out.ValueLength = number("qwen35.attention.value_length")
+	if wanted == "clip" {
+		out.Attributes = map[string]string{}
+		for _, key := range []string{"general.architecture", "general.type", "clip.projector_type", "clip.has_vision_encoder", "clip.use_gelu", "clip.vision.attention.head_count", "clip.vision.block_count", "clip.vision.embedding_length", "clip.vision.feed_forward_length", "clip.vision.image_size", "clip.vision.patch_size", "clip.vision.projection_dim", "clip.vision.spatial_merge_size"} {
+			value := fields[key]
+			switch v := value.(type) {
+			case string:
+				out.Attributes[key] = v
+			case uint64:
+				out.Attributes[key] = strconv.FormatUint(v, 10)
+			}
+		}
+		return out, nil
+	}
 	if out.Context < 128 || out.Context > 10_000_000 || out.Layers < 1 || out.Layers > 512 || out.KVHeads < 1 || out.KVHeads > 256 || out.KeyLength < 1 || out.KeyLength > 4096 || out.ValueLength < 1 || out.ValueLength > 4096 {
 		return out, fmt.Errorf("GGUF context/cache metadata is missing or unsupported")
 	}
 	return out, nil
 }
 func (h *Hub) inspectGGUF(ctx context.Context, m *Model, file string) error {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
-	defer cancel()
 	pin, e := ggufTarget(m.Hub.ID, m.Hub.SHA, file)
 	if e != nil {
 		return e
 	}
+	meta, e := h.inspectGGUFHeader(ctx, m, pin, "qwen35")
+	if e != nil {
+		return e
+	}
+	runtimeSpec, e := loadLlamaRuntime("")
+	if e != nil {
+		return e
+	}
+	m.GGUF = &GGUFSpec{File: pin, Metadata: meta, Runtime: runtimeSpec.ID}
+	return nil
+}
+func (h *Hub) inspectGGUFProjector(ctx context.Context, m *Model, file string) error {
+	if m.GGUF == nil {
+		return fmt.Errorf("select and inspect the language GGUF first")
+	}
+	pin, e := ggufArtifact(m.Hub.ID, m.Hub.SHA, file, true)
+	if e != nil {
+		return e
+	}
+	meta, e := h.inspectGGUFHeader(ctx, m, pin, "clip")
+	if e != nil {
+		return e
+	}
+	v := &GGUFVisionSpec{File: pin, Metadata: meta}
+	if e := validateGGUFVision(v); e != nil {
+		return e
+	}
+	m.GGUF.Vision = v
+	return nil
+}
+func (h *Hub) inspectGGUFHeader(ctx context.Context, m *Model, pin ArtifactPin, architecture string) (GGUFMetadata, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	file := pin.Name
 	found := false
 	for _, f := range m.Hub.Siblings {
 		if f.Name == file {
 			if f.Bytes() != pin.Size {
-				return fmt.Errorf("selected GGUF size differs from approved artifact")
+				return GGUFMetadata{}, fmt.Errorf("selected GGUF size differs from approved artifact")
 			}
 			found = true
 		}
 	}
 	if !found {
-		return fmt.Errorf("selected GGUF file is absent")
+		return GGUFMetadata{}, fmt.Errorf("selected GGUF file is absent")
 	}
 	read := func(offset, n int64) ([]byte, error) {
 		req, e := http.NewRequestWithContext(ctx, "GET", h.BaseURL+"/"+m.Hub.ID+"/resolve/"+m.Hub.SHA+"/"+escapeWeightPath(file), nil)
@@ -359,14 +409,5 @@ func (h *Hub) inspectGGUF(ctx context.Context, m *Model, file string) error {
 		}
 		return b, nil
 	}
-	meta, e := parseGGUF(pin.Size, read)
-	if e != nil {
-		return e
-	}
-	runtimeSpec, e := loadLlamaRuntime("")
-	if e != nil {
-		return e
-	}
-	m.GGUF = &GGUFSpec{File: pin, Metadata: meta, Runtime: runtimeSpec.ID}
-	return nil
+	return parseGGUFFor(pin.Size, read, architecture)
 }
