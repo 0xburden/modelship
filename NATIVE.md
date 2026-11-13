@@ -4,7 +4,7 @@ Use this backend when host CUDA PyTorch works but Docker GPU passthrough does no
 
 ## Requirements
 
-The unreleased [GGUF adapter](GGUF.md) is a separate standalone llama.cpp path: no Python/PyTorch requirement, pinned CUDA12.8 userspace runtime, and its own device/disk/artifact checks. The requirements below otherwise apply to Python recipes.
+The experimental [GGUF adapter](GGUF.md) is a separate standalone llama.cpp path: no Python/PyTorch requirement, pinned CUDA12.8 userspace runtime, and its own device/disk/artifact checks. The requirements below otherwise apply to Python recipes.
 
 - Linux amd64 with an NVIDIA GPU and working `nvidia-smi`.
 - Python 3.10+ with **already installed, functioning CUDA-enabled PyTorch** for established recipes; experimental recipes require Python >=3.11; new Qwen/Image/MOSS/WAN profiles also check PyTorch >=2.9 without replacing it.
@@ -34,7 +34,7 @@ modelship status --backend native --name chat
 
 `--python` names the **base interpreter** with working CUDA PyTorch. Do not resolve a venv interpreter symlink to the system interpreter yourself; that would change its import environment. Default: `python3`.
 
-Python-based native text uses **Transformers**, not vLLM. The unreleased pinned GGUF text adapter uses llama.cpp behind the authenticated Go gateway; see [GGUF.md](GGUF.md). The initial implementation is serial, non-streaming, and eager attention. Established recipes use float16; the experimental Gemma 4 recipe uses BF16, a modern conditional-generation loader, and its own dependency pins. See `MODEL_SUPPORT.md`; it is text-only and requires `--experimental`. It supports a limited `/v1/completions`, `/v1/chat/completions`, and `/v1/models` interface—not the complete OpenAI protocol. Request limits are documented in `/docs`. Chat requires a tokenizer chat template. Streaming/tool calls are not implemented; unsupported fields are rejected.
+Python-based native text uses **Transformers**, not vLLM. The experimental pinned GGUF text adapter uses llama.cpp behind the authenticated Go gateway; see [GGUF.md](GGUF.md). The initial implementation is serial, non-streaming, and eager attention. Established recipes use float16; the experimental Gemma 4 recipe uses BF16, a modern conditional-generation loader, and its own dependency pins. See `MODEL_SUPPORT.md`; it is text-only and requires `--experimental`. It supports a limited `/v1/completions`, `/v1/chat/completions`, and `/v1/models` interface—not the complete OpenAI protocol. Request limits are documented in `/docs`. Chat requires a tokenizer chat template. Streaming/tool calls are not implemented; unsupported fields are rejected.
 
 ## Images
 
@@ -69,7 +69,7 @@ After confirmation, the CLI:
 3. Creates a private per-deployment `--system-site-packages` virtual environment.
 4. Verifies that the new environment imports the **same PyTorch before pip runs**. If not, installation fails rather than trying to obtain another CUDA wheel.
 5. Installs pinned service dependencies with a constraint matching the existing torch package version. It never explicitly installs torch.
-6. Runs CUDA computation again and refuses startup if PyTorch's imported file/version changed. Recipe ID, loader, component dtypes, dependency pins, research/code approval, reviewed source hashes and absolute cache path are retained. New source builds use **schema 5** for the GGUF/runtime boundary (older CLIs reject it safely); this CLI still reads schema-1 through schema-4 Python deployments. Released alpha.2–alpha.4 used schema 4.
+6. Runs CUDA computation again and refuses startup if PyTorch's imported file/version changed. Recipe ID, loader, component dtypes, dependency pins, research/code approval, reviewed source hashes and absolute cache path are retained. Alpha.5 and newer use **schema 5** for the GGUF/runtime boundary (older CLIs reject it safely); this CLI still reads schema-1 through schema-4 Python deployments. Released alpha.2–alpha.4 used schema 4.
 7. Refreshes selected-GPU total/free VRAM against the saved weight minimum, then starts one detached worker, waits for health reporting the exact model revision and unique run identity, and prints its localhost endpoint.
 
 Workers set `USE_HUB_KERNELS=NO` to prevent implicit Transformers Hub-kernel downloads; standard loaders also reject model repository Python. MOSS is the sole explicit, reviewed-code exception.

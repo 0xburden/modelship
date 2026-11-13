@@ -1,6 +1,6 @@
-# Experimental GGUF text adapter (unreleased)
+# Experimental GGUF text adapter (v0.3.0-alpha.5)
 
-**Source-branch feature, not in the published v0.3.0-alpha.4 installer.** This is a first, deliberately narrow adapter, not general GGUF or prequantized Transformers support. Live loading/inference with the actual model and CUDA release binaries is still unvalidated. Do not treat source support or CPU fixtures as a GPU quality/fit guarantee.
+**Introduced in v0.3.0-alpha.5; not available in older installers.** This is a first, deliberately narrow adapter, not general GGUF or prequantized Transformers support. Live loading/inference with the actual model and CUDA release binaries is still unvalidated. Do not treat source support or CPU fixtures as a GPU quality/fit guarantee.
 
 ## Explicit target
 
@@ -29,7 +29,7 @@ Only the selected GPU UUID is visible to the child: `CUDA0`, all GPU layers, no 
 
 ## Plan, then deploy
 
-With a build from this branch:
+With v0.3.0-alpha.5 or newer:
 
 ```sh
 # Metadata/header only; no GPU required and no tensor payloads downloaded.

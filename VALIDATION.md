@@ -1,6 +1,6 @@
 # Validation record
 
-## Unreleased GGUF text: header and CPU-adapter evidence only
+## Alpha.5 GGUF text: header and CPU-adapter evidence only
 
 - Exact target and runtime pins: [GGUF.md](GGUF.md). No instance changes or model weight downloads were made. Full model/asset SHA-256 pins were checked against immutable HF LFS and named GitHub release metadata; actual archive/model bytes have not been downloaded or independently hash-verified in this run.
 - The new Go inspector parsed the real selected file using exact HTTP 206 Range responses, bounded header-only read-ahead: GGUF v3, `qwen35`, 866 non-overlapping tensors, 10,996,640-byte aligned header, 16,553,263,104 encoded tensor bytes, 262144 advertised context, 65 blocks, 4 KV heads, key/value dimensions 256. Mixed tensor types: F32, Q8_0, Q3_K/Q4_K/Q5_K/Q6_K, IQ4_NL/IQ3_S/IQ4_XS. No tensor payload was fetched.
