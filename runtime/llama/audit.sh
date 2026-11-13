@@ -15,9 +15,9 @@ find "$root" -type f | sort | while IFS= read -r file; do
   readelf -h "$file" | grep -q 'Advanced Micro Devices X86-64' || { echo 'Wrong ELF architecture' >&2; exit 1; }
   case "$(basename "$file")" in libc.so*|libm.so*|libpthread.so*|ld-linux*|libstdc++*|libgcc*|libcuda.so*) echo 'Host C/C++/driver library must not be bundled' >&2; exit 1;; esac
   check_version GLIBC 2.35 "$file"
-  check_version GLIBCXX 3.4.29 "$file"
+  check_version GLIBCXX 3.4.30 "$file"
   check_version CXXABI 1.3.13 "$file"
   LD_LIBRARY_PATH="$libraries" ldd "$file" >> "$report" 2>&1 || { echo 'Runtime dependency resolution failed' >&2; exit 1; }
 done
 if grep -q 'not found' "$report"; then echo 'Unresolved runtime dependency' >&2; exit 1; fi
-printf 'ABI_AUDIT_PASSED: GLIBC<=2.35 GLIBCXX<=3.4.29 CXXABI<=1.3.13\n' >> "$report"
+printf 'ABI_AUDIT_PASSED: GLIBC<=2.35 GLIBCXX<=3.4.30 CXXABI<=1.3.13\n' >> "$report"

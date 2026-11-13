@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [fix/gguf-ubuntu2204-runtime]
-    paths: ['runtime/llama/**', '.github/workflows/llama-runtime.yml']
+    paths: ['runtime/llama/Dockerfile']
 permissions:
   contents: read
 concurrency:
