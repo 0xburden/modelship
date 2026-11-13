@@ -30,16 +30,12 @@ RUN --network=none /src/cmake/bin/cmake -S /src/llama -B /src/build \
     -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TOOLS=ON \
     -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_APP=OFF && \
     /src/cmake/bin/cmake --build /src/build --target llama-server --parallel 2
-COPY runtime/llama/audit.sh /src/audit.sh
 RUN --network=none mkdir -p /out/package /out/evidence && \
     cp /src/build/bin/llama-server /out/package/ && \
     cp -P /src/build/bin/lib*.so* /out/package/ && \
     cp /src/llama/LICENSE /out/package/LICENSE.llama.cpp && \
     cp /src/cccl/LICENSE /out/package/LICENSE.CCCL && \
     cd /src/llama && find vendor -type f \( -iname "license*" -o -iname "copying*" \) -exec cp --parents {} /out/package/ \; && \
-    sh /src/audit.sh /out/package /out/evidence/abi.txt && \
-    LD_LIBRARY_PATH=/out/package /out/package/llama-server --version > /out/evidence/version.txt 2>&1 && \
-    LD_LIBRARY_PATH=/out/package /out/package/llama-server --help > /out/evidence/help.txt 2>&1 && \
     tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner --hard-dereference \
       -cf - -C /out/package . | gzip -n -9 > /out/llama-b12110-ubuntu22.04-cuda12.8-r1.tar.gz && \
     cd /out && sha256sum llama-b12110-ubuntu22.04-cuda12.8-r1.tar.gz > SHA256SUMS && \

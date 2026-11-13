@@ -21,8 +21,24 @@ jobs:
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/powershell
           docker image prune --all --force
           df -h /
-      - name: Build checksum-pinned CUDA runtime (no GPU or model weights)
-        run: docker build --file runtime/llama/Dockerfile --target export --output type=local,dest=runtime-out .
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - name: Compile and export raw candidate (not yet ABI-validated)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: runtime/llama/Dockerfile
+          target: export
+          outputs: type=local,dest=runtime-out
+          cache-from: type=gha,scope=llama-u2204-sm80
+          cache-to: type=gha,scope=llama-u2204-sm80,mode=max,ignore-error=true
+          provenance: false
+      - name: Retain compiled candidate even if later audits fail
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: UNVALIDATED-llama-u2204-sm80-${{ github.run_id }}
+          path: runtime-out/
+          compression-level: 0
+          retention-days: 7
       - name: Test core with the actual pinned CUDA userspace archive on Ubuntu 22.04
         run: |
           mkdir -p runtime-check/core runtime-check/cuda
@@ -37,6 +53,7 @@ jobs:
           sh runtime/llama/audit.sh runtime-check/core runtime-out/evidence/host-core-abi.txt "$libs"
           sh runtime/llama/audit.sh runtime-check/cuda runtime-out/evidence/host-cuda-abi.txt "$libs"
           LD_LIBRARY_PATH="$libs" runtime-check/core/llama-server --version > runtime-out/evidence/host-version.txt 2>&1
+          LD_LIBRARY_PATH="$libs" runtime-check/core/llama-server --help > runtime-out/evidence/help.txt 2>&1
           LD_LIBRARY_PATH="$libs" runtime-check/core/llama-server --list-devices > runtime-out/evidence/host-devices.txt 2>&1
           ! grep -E 'GLIBC.*not found|GLIBCXX.*not found|error while loading shared libraries' runtime-out/evidence/host-devices.txt
           for flag in --fit --no-context-shift --api-key-file --no-agent --no-mmproj --reasoning --spec-type; do
@@ -46,11 +63,19 @@ jobs:
         run: |
           cat runtime-out/SHA256SUMS
           cat runtime-out/evidence/size.txt
-          cat runtime-out/evidence/version.txt
-          tail -n 1 runtime-out/evidence/abi.txt
+          cat runtime-out/evidence/host-version.txt
+          tail -n 1 runtime-out/evidence/host-core-abi.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: llama-b12110-ubuntu22.04-cuda12.8-sm80-ptx-r1
           path: runtime-out/
           compression-level: 0
           retention-days: 7
+      - name: Retain audit diagnostics on success or failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: llama-u2204-abi-diagnostics-${{ github.run_id }}
+          path: runtime-out/evidence/
+          retention-days: 7
+          if-no-files-found: ignore
