@@ -37,8 +37,12 @@ jobs:
           python-version: '3.11'
           cache: pip
           cache-dependency-path: tests/processor-requirements.txt
-      - run: python3 -m pip install -r tests/processor-requirements.txt
+      - run: python3 -m pip install -r tests/processor-requirements.txt -r tests/requirements.txt
       - run: python3 tests/gemma_processor_check.py
+        env:
+          HF_HUB_OFFLINE: '1'
+          HF_HUB_DISABLE_TELEMETRY: '1'
+      - run: python3 tests/gemma_streamer_check.py
         env:
           HF_HUB_OFFLINE: '1'
           HF_HUB_DISABLE_TELEMETRY: '1'

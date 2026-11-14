@@ -1,3 +1,5 @@
+> **v0.3.0-alpha.10:** reviewed native Gemma E4B chat SSE and per-request thinking, both off by default, with schema8 execution/capability binding. Existing workers are not upgraded automatically; see [NATIVE_TEXT.md](NATIVE_TEXT.md). CPU-only streaming/decoder checks are not measured GPU validation.
+
 > **v0.3.0-alpha.9:** fixes case-only Hugging Face URL/repository spellings hiding the Gemma vision menu. The inspector accepts the Hub's validated canonical spelling only for the same repository; the exact reviewed image-profile revision/architecture and opt-in remain mandatory. Unsupported Gemma selections now explain why image input is unavailable. No new GPU inference validation is claimed.
 
 > **v0.3.0-alpha.8:** opt-in Gemma 4 PyTorch image understanding is implemented, with CPU/real-PIL-processor checks only. It is **not in published alpha.7**. See [PYTORCH_VISION.md](PYTORCH_VISION.md); real GPU image inference remains pending user testing. Existing GGUF validation is unchanged.

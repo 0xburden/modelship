@@ -41,6 +41,9 @@ func ggufOnly(m Model) bool {
 }
 func ggufModelPath(p Plan) string { return ggufArtifactPath(p, p.GGUF.File.Name) }
 func validateGGUFPlan(p Plan) error {
+	if p.TextFeatures != nil {
+		return fmt.Errorf("native Python text controls cannot be mixed with GGUF")
+	}
 	if p.Vision != nil {
 		return fmt.Errorf("PyTorch vision profiles cannot be mixed into a GGUF plan")
 	}

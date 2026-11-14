@@ -323,6 +323,9 @@ func writePlan(w io.Writer, p Plan) {
 		}
 		fmt.Fprintf(w, "GGUF file:   %s (%d bytes); SHA-256 %s\nRuntime pin: %s; CUDA0/all GPU layers; auto-fit disabled; %s\n", p.GGUF.File.Name, p.GGUF.File.Size, p.GGUF.File.SHA256, p.GGUF.Runtime, mode)
 	}
+	if p.TextFeatures != nil {
+		fmt.Fprintf(w, "Text controls: %s; chat SSE/thinking opt-in, off by default; <=%d total output tokens including reasoning\n", p.TextFeatures.ID, p.TextFeatures.MaxOutputTokens)
+	}
 	if p.Vision != nil {
 		fmt.Fprintf(w, "Vision:      %s; one uploaded image; at most %d image soft tokens; %d MiB additional activation heuristic (not measured peak)\nProcessor:   %s @ %s; %d bytes; SHA-256 %s\n", p.Vision.ID, p.Vision.MaxImageTokens, p.Vision.ActivationAllowanceMiB, p.Vision.Processor.Name, p.Vision.Revision, p.Vision.Processor.Size, p.Vision.Processor.SHA256)
 	}

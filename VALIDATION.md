@@ -1,5 +1,12 @@
 # Validation record
 
+## Alpha.10 native Gemma chat controls (CPU evidence)
+
+The exact E4B text-control profile retains the reviewed model/revision, BF16 full weights, default-off thinking, max1024 total output tokens and all fit/security checks. New schema8 identity/worker-spec tests preserve legacy schemas and refuse profile drift/inherited flags. Local HTTP/ASGI CPU fixtures exercise default and explicit thinking, separate token-ID channels/usage, context before CUDA transfer, vision dtypes, auth, worker-run rejection, actual incremental output, output backpressure, disconnect/deadline/OOM and CUDA-drain ownership/poisoned readiness. The real pinned Transformers5.22.2 TextStreamer was tested without Torch/Hub/weights for split Unicode/CJK/channel handling and no generated stdout. No GPU inference, user instance changes or model tensor downloads were used.
+
+Go race/vet passed. The Linux Python/real-CLI suite ran115 tests (112 passed, 3 optional release HTTP skipped); separately all3 actual-nginx HTTP cases verified all33 current/retained assets and alias/no-store rules. The real Linux/AMD64 version/catalog installer smoke passed in a network-disabled container using actual packaged bytes/checksums. Alpha.9 binary/installer/manifest were fetched/hash-verified and retained unchanged. No generated artifacts or credentials are committed.
+
+
 ## Alpha.9 Gemma URL/vision discovery repair
 
 A CPU-only reproduction of alpha.8 showed the exact reviewed Gemma checkpoint/architecture choosing the text family recipe but failing the image-profile lookup when the same HF repository was typed in lowercase. Public bounded Hub metadata for canonical/lowercase URLs returned the same canonical ID, SHA and architecture. This establishes a casing bug, not the exact original user input or GPU behavior.

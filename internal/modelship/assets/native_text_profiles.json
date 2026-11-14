@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "profiles": [{
+    "id": "gemma4-e4b-text-controls-v1",
+    "repo": "google/gemma-4-E4B-it",
+    "revision": "4ecc2ba63bcac23ba4a767fc87025b1450f84c9c",
+    "recipe": "gemma4-text",
+    "architecture": "Gemma4ForConditionalGeneration",
+    "max_output_tokens": 1024,
+    "default_enable_thinking": false,
+    "channel_start_id": 100,
+    "channel_end_id": 101,
+    "think_token_id": 98
+  }]
+}
