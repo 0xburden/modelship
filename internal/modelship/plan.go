@@ -33,8 +33,9 @@ type Options struct {
 	TrustModelCode bool
 }
 type Plan struct {
-	Vision *NativeVisionProfile `json:"vision,omitempty"`
-	GGUF   *GGUFSpec            `json:"gguf,omitempty"`
+	Vision       *NativeVisionProfile `json:"vision,omitempty"`
+	TextFeatures *NativeTextProfile   `json:"text_features,omitempty"`
+	GGUF         *GGUFSpec            `json:"gguf,omitempty"`
 
 	Listen              string            `json:"listen,omitempty"`
 	APIKeyFile          string            `json:"api_key_file,omitempty"`
@@ -346,6 +347,19 @@ func BuildPlan(m Model, h Host, o Options) (Plan, error) {
 		p.EstimatedVRAMMiB = max64(p.EstimatedVRAMMiB, ceilMiB(float64(p.WeightResidentBytes)*1.15+textKVBytes)+2048)
 	}
 	p.Warnings = append(p.Warnings, "Resident weight bytes are a requested-dtype lower bound: runtime buffers, modules retained in FP32, activations, caches and allocator overhead can require more. A fit flag is not an OOM guarantee.")
+	if backend == "native" && p.RecipeID == "gemma4-text" {
+		profile, e := nativeTextFor(m)
+		if e != nil {
+			return p, e
+		}
+		p.TextFeatures = profile
+		if e = validateNativeTextPlan(p); e != nil {
+			return p, e
+		}
+		if profile != nil {
+			p.Warnings = append(p.Warnings, "Native Gemma chat controls: real opt-in SSE and per-request enable_thinking; both off by default. Output remains capped at 1024 tokens including reasoning. Completion behavior is unchanged. Existing saved deployments are not upgraded; new schema-8 execution profile is required. Streaming/thinking GPU behavior and peak memory remain unmeasured.")
+		}
+	}
 	if o.Vision {
 		profile, e := nativeVisionFor(m)
 		if e != nil {

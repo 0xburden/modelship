@@ -127,6 +127,8 @@ func TestGemmaVisionNativeEnvAndSchemaBoundary(t *testing.T) {
 	if e = privateDir(dir); e != nil {
 		t.Fatal(e)
 	}
+	// A legacy image plan predates per-request text controls.
+	p.TextFeatures = nil
 	for _, schema := range []int{5, 6, 7} {
 		cfg := NativeConfig{Schema: schema, Plan: p}
 		if e = writeJSONFile(filepath.Join(dir, "config.json"), cfg); e != nil {

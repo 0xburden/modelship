@@ -66,3 +66,7 @@ New native metadata is **schema 7**, so older CLIs cannot ignore the image-proce
 Real CUDA image understanding, quality, peak memory, startup/cache/restart behavior on the image path and live Console-to-GPU requests remain **unvalidated**. Prior Gemma **text** validation and the user's **GGUF** image-understanding confirmation do not establish those facts. No instance was created/recreated/changed, and no model tensors were downloaded for implementation.
 
 For the eventual user GPU test: start with one small image and a short factual question; confirm both image and follow-up text responses, then stop/start and repeat from cache. Record the exact model/revision, GPU, request/image dimensions, response, memory observations and CLI version. Do not recreate the user's deleted instance or begin GPU work without authorization.
+
+## Optional native chat controls (alpha.10)
+
+New exact-profile E4B deployments can also advertise real chat SSE and opt-in thinking through the separately saved schema8 text profile. Image understanding remains a separate `--vision` choice; its processor/config/pixel/context budgets do not change. Both response controls default off, generation stays within 1024 total tokens including reasoning, and existing schema7 workers do not acquire features on CLI update or access configuration. See [NATIVE_TEXT.md](NATIVE_TEXT.md). New streaming/thinking GPU behavior is not established by earlier text/image reports.

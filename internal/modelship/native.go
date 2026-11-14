@@ -28,10 +28,10 @@ type TorchInfo struct {
 	PythonVersion  string `json:"python_version,omitempty"`
 }
 
-// Schema 7 records opt-in PyTorch image-processing constraints. Schemas 1–6
+// Schema 8 records reviewed per-request native text controls. Schemas 1–7
 // remain readable; GGUF vision keeps its schema-6 runtime/artifact identity.
 // Older CLIs must reject it instead of ignoring these execution constraints.
-const nativeSchemaVersion = 7
+const nativeSchemaVersion = 8
 
 type NativeConfig struct {
 	RuntimeBinary    string        `json:"runtime_binary,omitempty"`
@@ -121,8 +121,14 @@ func nativeConfig(name string) (NativeConfig, string, error) {
 	if err = readJSONFile(filepath.Join(dir, "config.json"), &cfg); err != nil {
 		return cfg, dir, fmt.Errorf("read native deployment %s: %w", name, err)
 	}
-	if (cfg.Schema != 1 && cfg.Schema != 2 && cfg.Schema != 3 && cfg.Schema != 4 && cfg.Schema != 5 && cfg.Schema != 6 && cfg.Schema != nativeSchemaVersion) || cfg.Plan.Backend != "native" || cfg.Plan.Name != name || !commitPattern.MatchString(cfg.Plan.Revision) || cfg.Plan.Port < 1024 || cfg.Plan.Port > 65535 {
+	if (cfg.Schema != 1 && cfg.Schema != 2 && cfg.Schema != 3 && cfg.Schema != 4 && cfg.Schema != 5 && cfg.Schema != 6 && cfg.Schema != 7 && cfg.Schema != nativeSchemaVersion) || cfg.Plan.Backend != "native" || cfg.Plan.Name != name || !commitPattern.MatchString(cfg.Plan.Revision) || cfg.Plan.Port < 1024 || cfg.Plan.Port > 65535 {
 		return cfg, dir, fmt.Errorf("invalid native deployment metadata")
+	}
+	if cfg.Plan.TextFeatures != nil && cfg.Schema < 8 {
+		return cfg, dir, fmt.Errorf("native text controls require schema 8")
+	}
+	if err := validateNativeTextPlan(cfg.Plan); err != nil {
+		return cfg, dir, err
 	}
 	if cfg.Plan.Vision != nil && cfg.Schema < 7 {
 		return cfg, dir, fmt.Errorf("PyTorch vision requires native schema 7")
@@ -182,11 +188,16 @@ func nativeEnv(p Plan, runID string) []string {
 	if dir, err := nativeDir(p.Name); err == nil {
 		artifactDir = filepath.Join(dir, "artifacts")
 	}
+	textProfile := ""
+	if p.TextFeatures != nil {
+		textProfile = p.TextFeatures.ID
+	}
 	visionProfile := ""
 	if p.Vision != nil {
 		visionProfile = p.Vision.ID
 	}
 	overrides := map[string]string{
+		"MODEL_TEXT_PROFILE": textProfile, "MODEL_TEXT_PROFILE_SPEC": encoded(p.TextFeatures, "null"),
 		"MODEL_VISION_PROFILE": visionProfile, "MODEL_VISION_PROFILE_SPEC": encoded(p.Vision, "null"),
 		"MODEL_LISTEN": nativeListen(p), "MODEL_API_KEY_FILE": p.APIKeyFile,
 		"MODEL_COMPONENT_DTYPES": encoded(p.ComponentDTypes, "{}"),
@@ -243,6 +254,9 @@ func DeployNative(ctx context.Context, p Plan, wait time.Duration) error {
 	if p.GGUF != nil {
 		return deployGGUF(ctx, p, wait)
 	}
+	if err := validateNativeTextPlan(p); err != nil {
+		return err
+	}
 	if err := validateNativeVisionPlan(p); err != nil {
 		return err
 	}
@@ -297,7 +311,7 @@ func DeployNative(ctx context.Context, p Plan, wait time.Duration) error {
 	if err = writeJSONFile(filepath.Join(dir, "config.json"), cfg); err != nil {
 		return err
 	}
-	for _, name := range []string{"api_auth.py", "native_entry.py", "server.py", "text_server.py", "model_code.py", "video_server.py", "gemma_vision.py", "vision_input.py", "pytorch_vision_profiles.json"} {
+	for _, name := range []string{"api_auth.py", "native_entry.py", "server.py", "text_server.py", "model_code.py", "video_server.py", "gemma_vision.py", "vision_input.py", "pytorch_vision_profiles.json", "native_text.py", "native_text_profiles.json"} {
 		b, e := assets.ReadFile("assets/" + name)
 		if e != nil {
 			return e
@@ -352,6 +366,9 @@ func runNativeInstall(ctx context.Context, python string, args ...string) error 
 	return cmd.Run()
 }
 func startNative(ctx context.Context, cfg NativeConfig, dir string, wait time.Duration) error {
+	if err := validateNativeTextPlan(cfg.Plan); err != nil {
+		return err
+	}
 	if err := validateNativeVisionPlan(cfg.Plan); err != nil {
 		return err
 	}
@@ -594,7 +611,7 @@ func ManageNative(ctx context.Context, action, name string) error {
 		if state == "running" {
 			ready, healthError = nativeHealth(ctx, cfg, run)
 		}
-		return printJSON(map[string]any{"backend": "native", "name": name, "state": state, "pid": pid, "model": cfg.Plan.Model, "revision": cfg.Plan.Revision, "endpoint": fmt.Sprintf("http://127.0.0.1:%d", cfg.Plan.Port), "listen": nativeListen(cfg.Plan), "auth_enabled": cfg.Plan.APIKeyFile != "", "ready": ready, "health_error": healthError, "log": filepath.Join(dir, "service.log"), "torch": cfg.Torch, "runtime": cfg.Plan.Runtime, "gguf": cfg.Plan.GGUF, "vision": cfg.Plan.Vision})
+		return printJSON(map[string]any{"backend": "native", "name": name, "state": state, "pid": pid, "model": cfg.Plan.Model, "revision": cfg.Plan.Revision, "endpoint": fmt.Sprintf("http://127.0.0.1:%d", cfg.Plan.Port), "listen": nativeListen(cfg.Plan), "auth_enabled": cfg.Plan.APIKeyFile != "", "ready": ready, "health_error": healthError, "log": filepath.Join(dir, "service.log"), "torch": cfg.Torch, "runtime": cfg.Plan.Runtime, "gguf": cfg.Plan.GGUF, "vision": cfg.Plan.Vision, "text_features": cfg.Plan.TextFeatures})
 	}
 	if action == "logs" {
 		cmd := exec.CommandContext(ctx, "tail", "-n", "200", "-f", filepath.Join(dir, "service.log"))
