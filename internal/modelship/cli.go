@@ -44,7 +44,7 @@ Plan/deploy options:
   --research         Acknowledge non-commercial research/evaluation use (Qwen Image)
   --trust-model-code Explicit approval of the pinned, hash-verified MOSS Python code
   --gguf-file FILE  Explicit reviewed GGUF variant; no automatic conversion
-  --vision          Opt in to reviewed image understanding (native Gemma or GGUF)
+  --vision          Opt in to reviewed image understanding (native Gemma/Qwen or GGUF)
   --mmproj-file FILE  Explicit reviewed projector (required for GGUF vision only)
   --weights-repo ID  Explicit official WAN Diffusers conversion; never inferred
   --name modelship  --allow-risk   --gpu-mode auto|nvidia|cdi (Docker)
@@ -319,6 +319,9 @@ func writePlan(w io.Writer, p Plan) {
 		if p.GGUF.Vision != nil {
 			v := p.GGUF.Vision
 			mode = "text + one uploaded image (experimental)"
+			if v.Images != nil {
+				mode = fmt.Sprintf("text + up to %d images per conversation (experimental; aggregate 8 MiB/8,388,608 pixels)", v.Images.MaxImages)
+			}
 			fmt.Fprintf(w, "Projector:   %s (%d bytes); SHA-256 %s; %.3f GiB encoded tensor budget\n", v.File.Name, v.File.Size, v.File.SHA256, float64(v.Metadata.TensorBytes)/(1<<30))
 		}
 		fmt.Fprintf(w, "GGUF file:   %s (%d bytes); SHA-256 %s\nRuntime pin: %s; CUDA0/all GPU layers; auto-fit disabled; %s\n", p.GGUF.File.Name, p.GGUF.File.Size, p.GGUF.File.SHA256, p.GGUF.Runtime, mode)
@@ -327,7 +330,11 @@ func writePlan(w io.Writer, p Plan) {
 		fmt.Fprintf(w, "Text controls: %s; chat SSE/thinking opt-in, off by default; <=%d total output tokens including reasoning\n", p.TextFeatures.ID, p.TextFeatures.MaxOutputTokens)
 	}
 	if p.Vision != nil {
-		fmt.Fprintf(w, "Vision:      %s; one uploaded image; at most %d image soft tokens; %d MiB additional activation heuristic (not measured peak)\nProcessor:   %s @ %s; %d bytes; SHA-256 %s\n", p.Vision.ID, p.Vision.MaxImageTokens, p.Vision.ActivationAllowanceMiB, p.Vision.Processor.Name, p.Vision.Revision, p.Vision.Processor.Size, p.Vision.Processor.SHA256)
+		count := 1
+		if p.Vision.Images != nil {
+			count = p.Vision.Images.MaxImages
+		}
+		fmt.Fprintf(w, "Vision:      %s; up to %d images across conversation; at most %d tokens/image; %d MiB additional activation heuristic (not measured peak)\nProcessor:   %s @ %s; %d bytes; SHA-256 %s\n", p.Vision.ID, count, p.Vision.MaxImageTokens, p.Vision.ActivationAllowanceMiB, p.Vision.Processor.Name, p.Vision.Revision, p.Vision.Processor.Size, p.Vision.Processor.SHA256)
 	}
 	if p.Context > 0 {
 		fmt.Fprintf(w, "Context:     %d tokens\n", p.Context)

@@ -375,6 +375,8 @@ func runWizardAttempt(ctx context.Context, input io.Reader, output io.Writer, d 
 		defaultRevision = ggufRevision
 	} else if strings.EqualFold(selected, gemmaVisionRepo) {
 		defaultRevision = gemmaVisionRevision
+	} else if strings.EqualFold(selected, qwenVisionRepo) {
+		defaultRevision = qwenVisionRevision
 	}
 	catalog, err := LoadRecipes()
 	if err != nil {
@@ -387,8 +389,8 @@ func runWizardAttempt(ctx context.Context, input io.Reader, output io.Writer, d 
 	}
 	if defaultRevision == "main" {
 		w.explain("Upstream branch default", "main means the repository's current upstream branch, not a fixed or locally tested version. It is resolved once now; review/deployment use the exact pinned commit SHA.")
-	} else if strings.EqualFold(selected, gemmaVisionRepo) {
-		w.explain("Reviewed image-profile pin", "This optional Gemma image adapter was reviewed at this exact commit. Text-only is still the default; other revisions/variants are not substituted or assumed vision-compatible.")
+	} else if strings.EqualFold(selected, gemmaVisionRepo) || strings.EqualFold(selected, qwenVisionRepo) {
+		w.explain("Reviewed image-profile pin", "This optional image adapter was reviewed at this exact commit. Text-only is still the default; other revisions/variants are not substituted or assumed vision-compatible.")
 	} else if strings.EqualFold(selected, ggufRepo) {
 		w.explain("GGUF artifact pin", "This first GGUF adapter uses a reviewed immutable artifact manifest; another revision or file is not silently substituted.")
 	} else {
@@ -511,13 +513,13 @@ func runWizardAttempt(ctx context.Context, input io.Reader, output io.Writer, d 
 	}
 	if recipe.Format != "gguf" && backend == "native" {
 		if _, e := nativeVisionFor(model); e == nil {
-			w.explain("Input capability", "Text-only stays the default. The reviewed Gemma image mode uses the same full BF16 checkpoint, a pinned PIL image processor and an extra activation heuristic. One uploaded PNG/JPEG + text; not image generation/audio/video. CPU tests are not actual GPU image-inference validation.")
+			w.explain("Input capability", "Text-only stays the default. The reviewed image mode uses the same full BF16 checkpoint, a pinned PIL image processor and an extra activation heuristic. Up to four PNG/JPEG images across turns + text, bounded to 8 MiB / 8,388,608 aggregate pixels; not image generation/audio/video. CPU tests are not actual GPU image-inference validation.")
 			mode, e := w.choose("Input mode", []string{"text-only", "vision-images"}, "text-only")
 			if e != nil {
 				return e
 			}
 			vision = mode == "vision-images"
-		} else if recipe.ID == "gemma4-text" {
+		} else if recipe.ID == "gemma4-text" || recipe.ID == "qwen3.8-multimodal" {
 			w.explain("Image input unavailable", fmt.Sprintf("Selected %q @ %q stays text-only. %s. No model/revision is substituted and no vision approval is assumed.", model.Hub.ID, model.Hub.SHA, e))
 		}
 	}

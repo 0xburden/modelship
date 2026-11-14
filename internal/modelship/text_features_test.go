@@ -50,7 +50,9 @@ func TestNativeGemmaTextProfileConstraintsAndLegacyBoundary(t *testing.T) {
 	if e = privateDir(dir); e != nil {
 		t.Fatal(e)
 	}
-	for _, schema := range []int{6, 7, 8} {
+	profiles, _ := nativeVisionProfiles()
+	p.Vision = &profiles[0] // Legacy one-image contract, independent of the new image schema.
+	for _, schema := range []int{6, 7, 8, 9} {
 		cfg := NativeConfig{Schema: schema, Plan: p}
 		if e = writeJSONFile(filepath.Join(dir, "config.json"), cfg); e != nil {
 			t.Fatal(e)

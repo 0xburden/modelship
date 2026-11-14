@@ -1,3 +1,5 @@
+> **Multi-image candidate (alpha.11):** new explicitly saved schema9 vision contracts for Gemma native, Qwen GGUF and Qwen native; see [MULTI_IMAGE.md](MULTI_IMAGE.md). Legacy workers remain one-image/text-only as originally approved. GPU multi-image confirmation is pending.
+
 # Model recipes and requested-model support
 
 These recipes ship in `v0.3.0-alpha.1`. They are **not** included in `v0.2.0-alpha.1`; that earlier release remains byte-for-byte unchanged. The recipe registry is embedded in `internal/modelship/assets/recipes.json`.

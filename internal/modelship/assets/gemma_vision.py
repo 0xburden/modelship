@@ -43,6 +43,7 @@ class GemmaImageProcessor:
                 "max_soft_tokens", "patch_size", "pooling_kernel_size", "resample", "rescale_factor")
         self.processor = Gemma4ImageProcessorPil(**{key: image[key] for key in keys})
         self.max_tokens = profile["max_image_tokens"]
+        self.images_policy = profile.get("images")
         if self.processor.backend != "pil":
             raise RuntimeError("Gemma image adapter requires the reviewed PIL backend")
 
@@ -52,16 +53,18 @@ class GemmaImageProcessor:
             if self.image_token in prompt:
                 raise ValueError("image markers require an uploaded image")
             return tokenizer(prompt, return_tensors="pt", add_special_tokens=False)
-        if len(images) != 1 or prompt.count(self.image_token) != 1:
+        if len(images) > (getattr(self, "images_policy", None) or {}).get("max_images", 1) or prompt.count(self.image_token) != len(images):
             raise ValueError("image placeholders do not match the uploaded image")
         processed = self.processor(images=images, max_soft_tokens=self.max_tokens, return_tensors="pt")
-        count = int(processed["num_soft_tokens_per_image"][0])
-        if not 1 <= count <= self.max_tokens or tuple(processed["pixel_values"].shape) != (1, 2520, 768) or tuple(processed["image_position_ids"].shape) != (1, 2520, 2):
+        counts = [int(n) for n in processed["num_soft_tokens_per_image"]]
+        if len(counts) != len(images) or any(not 1 <= n <= self.max_tokens for n in counts) or tuple(processed["pixel_values"].shape) != (len(images), 2520, 768) or tuple(processed["image_position_ids"].shape) != (len(images), 2520, 2):
             raise ValueError("processor returned an unsupported image patch layout")
-        expanded = prompt.replace(self.image_token, self.boi_token + self.image_token * count + self.eoi_token, 1)
+        # Split once: replacing an expanded marker again would corrupt image1.
+        parts = prompt.split(self.image_token)
+        expanded = parts[0] + "".join(self.boi_token + self.image_token * n + self.eoi_token + tail for n, tail in zip(counts, parts[1:]))
         inputs = dict(tokenizer(expanded, return_tensors="pt", add_special_tokens=False))
         modality = inputs["input_ids"].eq(self.image_token_id).to(dtype=torch.long)
-        if int(modality.sum().item()) != count:
+        if int(modality.sum().item()) != sum(counts):
             raise ValueError("image tokenization does not match encoded image features")
         inputs["mm_token_type_ids"] = modality
         inputs["pixel_values"] = processed["pixel_values"]
@@ -74,13 +77,21 @@ def load_image_processor(profile_id, model, revision, recipe, loader, dtype, tok
     if path.stat().st_size > 16384:
         raise RuntimeError("invalid bundled vision profiles")
     catalog = json.loads(path.read_text())
-    if catalog.get("schema") != 1 or len(catalog.get("profiles", [])) != 1:
+    if catalog.get("schema") != 1 or len(catalog.get("profiles", [])) not in (2, 3):
         raise RuntimeError("invalid bundled vision profiles")
     profile = next((p for p in catalog["profiles"] if p["id"] == profile_id), None)
     try:
         approved = json.loads(os.environ.get("MODEL_VISION_PROFILE_SPEC", "null"))
     except ValueError:
         raise RuntimeError("invalid saved vision profile") from None
-    if profile is None or profile != approved or profile.get("max_image_tokens") != 280 or profile.get("activation_allowance_mib") != 2048 or model != profile["repo"] or revision != profile["revision"] or recipe != profile["recipe"] or loader != "multimodal-lm" or dtype != "bfloat16":
+    if profile is None or profile != approved or model != profile["repo"] or revision != profile["revision"] or recipe != profile["recipe"] or loader != "multimodal-lm" or dtype != "bfloat16":
         raise RuntimeError("vision requires the exact reviewed Gemma image profile")
+    policy = profile.get("images")
+    if policy is not None and policy != {"max_images": 4, "max_total_image_bytes": 8388608, "max_total_image_pixels": 8388608}:
+        raise RuntimeError("invalid reviewed image budget")
+    if profile["id"] == "qwen38-27b-images-v1":
+        from qwen_vision import QwenImageProcessor
+        return QwenImageProcessor(profile, tokenizer)
+    if profile["id"] not in ("gemma4-e4b-image-v1", "gemma4-e4b-images-v2") or profile.get("max_image_tokens") != 280 or profile.get("activation_allowance_mib") != (4096 if policy else 2048):
+        raise RuntimeError("invalid Gemma image profile")
     return GemmaImageProcessor(profile, tokenizer)

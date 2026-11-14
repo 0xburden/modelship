@@ -57,3 +57,18 @@ for width, height in ((224, 224), (480, 640), (640, 480), (4096, 1)):
     assert reference == adapter.boi_token + adapter.image_token * count + adapter.eoi_token
     print(f'REAL_PIL_PROCESSOR_CPU_PASS {width}x{height}: {count} soft tokens, padded 2520 patches', flush=True)
 print('GEMMA_PROCESSOR_CPU_VALIDATED: no Torch, torchvision, Hub network, model weights or GPU inference', flush=True)
+
+# Distinct size/color inputs expose flattening, reordering and shape errors.
+from contextlib import ExitStack
+with ExitStack() as stack:
+    images = [stack.enter_context(Image.new('RGB', size, color)) for size, color in
+              [((224,224),'red'), ((480,640),'blue'), ((640,480),'green'), ((4096,1),'white')]]
+    batch = adapter.processor(images=images, max_soft_tokens=280, return_tensors='np')
+    assert batch['pixel_values'].shape == (4,2520,768)
+    assert batch['image_position_ids'].shape == (4,2520,2)
+    assert list(batch['num_soft_tokens_per_image']) == [256,266,266,280]
+    for i, image in enumerate(images):
+        single = adapter.processor(images=[image], max_soft_tokens=280, return_tensors='np')
+        np.testing.assert_array_equal(batch['pixel_values'][i], single['pixel_values'][0])
+        np.testing.assert_array_equal(batch['image_position_ids'][i], single['image_position_ids'][0])
+print('GEMMA_MULTI_PROCESSOR_CPU_VALIDATED: 4 ordered images equal independent reference calls; no inference')

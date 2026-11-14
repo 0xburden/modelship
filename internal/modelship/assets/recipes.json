@@ -182,13 +182,13 @@
       ],
       "notes": [
         "Loads the full conditional-generation checkpoint; E4B effective parameters do not mean 4B stored parameters.",
-        "Text-only by default. Explicit --vision enables image understanding only for the reviewed official Gemma E4B profile/revision; audio/video/tools remain unsupported.",
+        "Text-only by default. Explicit --vision uses the reviewed exact official Gemma E4B profile; new schema9 deployments permit up to four bounded images. Audio/video/tools remain unsupported.",
         "Uses a separate modern Transformers environment; existing 4.x deployments are not upgraded."
       ]
     },
     {
       "id": "qwen3.8-multimodal",
-      "name": "Qwen3.8 / Qwen3.5 conditional generation",
+      "name": "Qwen3.8 / Qwen3.5 native text, optional reviewed image understanding",
       "kind": "text",
       "status": "experimental",
       "repositories": [
@@ -223,7 +223,7 @@
         "pydantic==2.11.7"
       ],
       "notes": [
-        "Full unquantized BF16 checkpoint, text-only HTTP input. No vision input, quantization or CPU offload.",
+        "Full unquantized BF16 checkpoint, text-only HTTP input by default. Explicit --vision enables only the separately reviewed exact Qwen3.8-27B profile with up to four bounded still images. No quantization or CPU offload.",
         "Hybrid attention uses the modern Transformers implementation; Pinned text-only checkpoint GPU-tested on A100 80 GB with semantic/API and cached restart checks.",
         "The 27B checkpoint exceeds A6000 VRAM before cache/activations; weights-alone fit is a non-overridable preflight check."
       ]

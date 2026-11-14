@@ -28,10 +28,10 @@ type TorchInfo struct {
 	PythonVersion  string `json:"python_version,omitempty"`
 }
 
-// Schema 8 records reviewed per-request native text controls. Schemas 1–7
-// remain readable; GGUF vision keeps its schema-6 runtime/artifact identity.
+// Schema 9 records explicit multi-image ingestion policies. Schemas 1–8
+// remain readable without silently acquiring new image behavior.
 // Older CLIs must reject it instead of ignoring these execution constraints.
-const nativeSchemaVersion = 8
+const nativeSchemaVersion = 9
 
 type NativeConfig struct {
 	RuntimeBinary    string        `json:"runtime_binary,omitempty"`
@@ -121,8 +121,11 @@ func nativeConfig(name string) (NativeConfig, string, error) {
 	if err = readJSONFile(filepath.Join(dir, "config.json"), &cfg); err != nil {
 		return cfg, dir, fmt.Errorf("read native deployment %s: %w", name, err)
 	}
-	if (cfg.Schema != 1 && cfg.Schema != 2 && cfg.Schema != 3 && cfg.Schema != 4 && cfg.Schema != 5 && cfg.Schema != 6 && cfg.Schema != 7 && cfg.Schema != nativeSchemaVersion) || cfg.Plan.Backend != "native" || cfg.Plan.Name != name || !commitPattern.MatchString(cfg.Plan.Revision) || cfg.Plan.Port < 1024 || cfg.Plan.Port > 65535 {
+	if (cfg.Schema != 1 && cfg.Schema != 2 && cfg.Schema != 3 && cfg.Schema != 4 && cfg.Schema != 5 && cfg.Schema != 6 && cfg.Schema != 7 && cfg.Schema != 8 && cfg.Schema != nativeSchemaVersion) || cfg.Plan.Backend != "native" || cfg.Plan.Name != name || !commitPattern.MatchString(cfg.Plan.Revision) || cfg.Plan.Port < 1024 || cfg.Plan.Port > 65535 {
 		return cfg, dir, fmt.Errorf("invalid native deployment metadata")
+	}
+	if cfg.Schema < 9 && (cfg.Plan.Vision != nil && cfg.Plan.Vision.Images != nil || cfg.Plan.GGUF != nil && cfg.Plan.GGUF.Vision != nil && cfg.Plan.GGUF.Vision.Images != nil) {
+		return cfg, dir, fmt.Errorf("multi-image ingestion requires native schema 9")
 	}
 	if cfg.Plan.TextFeatures != nil && cfg.Schema < 8 {
 		return cfg, dir, fmt.Errorf("native text controls require schema 8")
@@ -311,7 +314,7 @@ func DeployNative(ctx context.Context, p Plan, wait time.Duration) error {
 	if err = writeJSONFile(filepath.Join(dir, "config.json"), cfg); err != nil {
 		return err
 	}
-	for _, name := range []string{"api_auth.py", "native_entry.py", "server.py", "text_server.py", "model_code.py", "video_server.py", "gemma_vision.py", "vision_input.py", "pytorch_vision_profiles.json", "native_text.py", "native_text_profiles.json"} {
+	for _, name := range []string{"api_auth.py", "native_entry.py", "server.py", "text_server.py", "model_code.py", "video_server.py", "gemma_vision.py", "qwen_vision.py", "vision_input.py", "pytorch_vision_profiles.json", "native_text.py", "native_text_profiles.json"} {
 		b, e := assets.ReadFile("assets/" + name)
 		if e != nil {
 			return e
