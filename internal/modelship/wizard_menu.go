@@ -82,15 +82,14 @@ func (m *wizardMenu) row(value string) string {
 func (m *wizardMenu) rows(typed string) []string {
 	n := min(m.visible, len(m.choices))
 	start := max(0, min(m.selected-n/2, len(m.choices)-n))
-	rows := []string{m.row(m.label), m.row(fmt.Sprintf("Options %d-%d of %d", start+1, start+n, len(m.choices)))}
+	rows := []string{m.row(m.label)}
+	if len(m.choices) > n {
+		rows = append(rows, m.row(fmt.Sprintf("Options %d-%d of %d", start+1, start+n, len(m.choices))))
+	}
 	for i := start; i < start+n; i++ {
 		marker := "  ( )"
 		if i == m.selected {
 			marker = "> (o)"
-		}
-		shortcut := strconv.Itoa(i + 1)
-		if i < 26 {
-			shortcut += fmt.Sprintf(" / %c", 'a'+i)
 		}
 		label := m.choices[i]
 		if m.labels[label] != "" {
@@ -99,9 +98,9 @@ func (m *wizardMenu) rows(typed string) []string {
 		if m.choices[i] == m.defaultValue {
 			label += " (default)"
 		}
-		rows = append(rows, m.row(fmt.Sprintf("%s %s) %s", marker, shortcut, label)))
+		rows = append(rows, m.row(fmt.Sprintf("%s %s", marker, label)))
 	}
-	rows = append(rows, m.row("Up/Down: select  Enter: confirm  Esc: back"), m.row("Shortcut (number/letter/value): "+typed))
+	rows = append(rows, m.row("Up/Down: select  Enter: confirm  Esc: back"), m.row("Selection: "+typed))
 	return rows
 }
 

@@ -123,9 +123,13 @@ func (w *wizardUI) askChoice(label, fallback string, valid func(string) error, c
 		if err := w.ctx.Err(); err != nil {
 			return "", err
 		}
-		question := fmt.Sprintf("%s: ", terminalText(label))
+		promptLabel := label
+		if len(choices) > 0 {
+			promptLabel += " (number, letter, or full value)"
+		}
+		question := fmt.Sprintf("%s: ", terminalText(promptLabel))
 		if fallback != "" {
-			question = fmt.Sprintf("%s [%s]: ", terminalText(label), terminalText(fallback))
+			question = fmt.Sprintf("%s [%s]: ", terminalText(promptLabel), terminalText(fallback))
 		}
 		var line wizardLine
 		if w.session != nil && w.session.terminal != nil {
@@ -233,8 +237,11 @@ func (w *wizardUI) selectChoice(label string, choices []string, fallback string,
 		}
 		fmt.Fprintf(w.out, "  %d%s) %s%s\n", i+1, letter, terminalText(display), mark)
 	}
-	value, e := w.askChoice(label+" (number, letter, or full value)", fallback, func(value string) error {
+	value, e := w.askChoice(label, fallback, func(value string) error {
 		if _, ok := choiceValue(value, choices); !ok {
+			if rich {
+				return fmt.Errorf("Select an option with Up/Down and Enter, or type a listed value")
+			}
 			return fmt.Errorf("Choose 1–%d, a letter, or a listed value", len(choices))
 		}
 		return nil

@@ -359,3 +359,5 @@ The exact selected artifact/quantization, GPU, input/output, memory figures, Con
 - Public alpha.12 artifacts are retained by exact hashes before proposing alpha.13. Package/CPU checks remain distinct from model inference; this feature does not validate Qwen vision or change existing deployments.
 
 Local candidate checks passed: Linux AMD64 Go race/vet including controlling-PTY tests; packaged Linux CLI/Python 121 tests (118 passed, three optional HTTP tests skipped); the three real-nginx HTTP tests separately passed with all 42 release assets, followed by a network-disabled AMD64 installer/version/catalog smoke. Staged secret scan found no leaks. No user worker or GPU was touched.
+
+Radio-menu cleanup regression coverage verifies labels/selection markers without number/letter prefixes or legacy input hints; position ranges remain for scrolling lists only. Existing numeric/letter/full-value shortcuts, plain fallback labels, Back/default/history, bounds, cancellation and real PTY post-deployment Ctrl-C checks remain in place.

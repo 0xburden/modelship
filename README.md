@@ -1,4 +1,4 @@
-> **Alpha.13 candidate:** successful guided deployments automatically open live logs with Ctrl-C-to-exit guidance; exiting the viewer never sends a stop request. Readiness wait `0` opens logs immediately after submission; flag-based deploy remains non-interactive. See [WIZARD.md](WIZARD.md).
+> **Alpha.13 candidate:** successful guided deployments automatically open live logs with Ctrl-C-to-exit guidance; exiting the viewer never sends a stop request. Readiness wait `0` opens logs immediately after submission; flag-based deploy remains non-interactive. Radio menus also omit redundant number/letter prefixes and legacy input hints; plain menus keep them. See [WIZARD.md](WIZARD.md).
 
 > **v0.3.0-alpha.12:** arrow-key radio-style selectors for fixed wizard choices, bounded scrolling, existing shortcuts and automatic plain-terminal fallback. `modelship launch --plain` keeps numbered menus. Safety consents/final approval remain typed y/N, default No. See [WIZARD.md](WIZARD.md). No inference/worker changes.
 
