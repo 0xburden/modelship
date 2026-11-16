@@ -18,7 +18,7 @@ import (
 const help = `modelship — NVIDIA model deployment (Linux amd64)
 
 Commands:
-  launch                             Guided model setup (also the interactive default)
+  launch [--plain]                   Guided model setup (also the interactive default)
   catalog [--json]                    List implemented, experimental, and planned recipes
   inspect MODEL [--gguf-file FILE] [--mmproj-file FILE] [--json]              Inspect metadata without a GPU or model download
   doctor                             Inspect NVIDIA GPUs and Docker

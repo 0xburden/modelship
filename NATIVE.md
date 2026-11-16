@@ -17,7 +17,7 @@ The experimental [GGUF adapter](GGUF.md) is a separate standalone llama.cpp path
 
 ## Guided first deployment
 
-Run `modelship launch` (or download and run the published installer without arguments in a terminal). The wizard defaults to native when supported, checks existing CUDA PyTorch, and uses the shared pinned planner/deployer. It never installs drivers/PyTorch or stops another deployment. New API keys and deployment changes wait for final confirmation. Batch commands below remain supported.
+Run `modelship launch` (or download and run the published installer without arguments in a terminal). The wizard defaults to native when supported, checks existing CUDA PyTorch, and uses the shared pinned planner/deployer. It never installs drivers/PyTorch or stops another deployment. New API keys and deployment changes wait for final confirmation. Batch commands below remain supported. Alpha.12 adds arrow-key fixed-choice selectors; `modelship launch --plain` retains numbered text menus. Safety confirmations remain typed, default No; see [WIZARD.md](WIZARD.md).
 
 ## First deployment
 

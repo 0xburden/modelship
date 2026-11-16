@@ -19,6 +19,8 @@ type wizardSession struct {
 	redo               string
 	redoSet, committed bool
 	terminal           *os.File
+	terminalOutput     *os.File
+	plain              bool
 }
 type replayOutput struct {
 	out io.Writer
@@ -43,10 +45,15 @@ func copyWizardModel(m Model) Model {
 	return m
 }
 func runWizard(ctx context.Context, input io.Reader, output io.Writer, d wizardDeps) error {
-	session := &wizardSession{reader: bufio.NewReaderSize(input, 8193)}
+	return runWizardMode(ctx, input, output, d, false)
+}
+
+func runWizardMode(ctx context.Context, input io.Reader, output io.Writer, d wizardDeps, plain bool) error {
+	session := &wizardSession{reader: bufio.NewReaderSize(input, 8193), plain: plain}
 	if f, ok := input.(*os.File); ok && terminalFile(f) {
 		if o, ok := output.(*os.File); ok && terminalFile(o) {
 			session.terminal = f
+			session.terminalOutput = o
 		}
 	}
 	// Only immutable metadata is cached across Back. GPU/cache/fit checks refresh;

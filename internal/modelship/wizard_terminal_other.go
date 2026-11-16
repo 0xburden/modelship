@@ -12,3 +12,7 @@ import (
 func readWizardTerminal(context.Context, *os.File, io.Writer, string) (string, error) {
 	return "", fmt.Errorf("interactive terminal input is unsupported on this platform")
 }
+
+func readWizardInput(context.Context, *os.File, io.Writer, string, *wizardMenu) (string, error) {
+	return "", fmt.Errorf("interactive terminal input is unsupported on this platform")
+}

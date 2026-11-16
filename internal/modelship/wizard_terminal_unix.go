@@ -17,13 +17,24 @@ import (
 // Raw mode is scoped to one prompt and always restored before metadata work,
 // approvals or deployment. Esc edits history; Ctrl-C/EOF cancel, never approve.
 func readWizardTerminal(ctx context.Context, f *os.File, out io.Writer, question string) (string, error) {
+	return readWizardInput(ctx, f, out, question, nil)
+}
+
+func readWizardInput(ctx context.Context, f *os.File, out io.Writer, question string, menu *wizardMenu) (string, error) {
 	fd := int(f.Fd())
 	old, e := term.MakeRaw(fd)
 	if e != nil {
 		return "", fmt.Errorf("cannot enable interactive terminal input")
 	}
-	defer term.Restore(fd, old)
-	fmt.Fprint(out, question)
+	defer func() {
+		fmt.Fprint(out, "\r\n")
+		term.Restore(fd, old)
+	}()
+	if menu == nil {
+		fmt.Fprint(out, question)
+	} else {
+		menu.draw(out, "")
+	}
 	ready := func(ms int) (bool, error) {
 		p := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
 		n, e := unix.Poll(p, ms)
@@ -55,9 +66,15 @@ func readWizardTerminal(ctx context.Context, f *os.File, out io.Writer, question
 			return "", e
 		}
 		b := one[0]
+		if menu != nil {
+			width, height, err := term.GetSize(fd)
+			if err != nil || width <= menu.width || height < menu.visible+5 {
+				return "", errWizardTerminalSize
+			}
+		}
 		switch b {
 		case 3:
-			fmt.Fprint(out, "^C\r\n")
+			fmt.Fprint(out, "^C")
 			return "", errWizardCanceled
 		case 4:
 			return "", io.EOF
@@ -65,46 +82,35 @@ func readWizardTerminal(ctx context.Context, f *os.File, out io.Writer, question
 			if len(pending) > 0 {
 				return "", fmt.Errorf("invalid Unicode input")
 			}
-			fmt.Fprint(out, "\r\n")
+			if menu != nil && len(data) == 0 && menu.selected >= 0 {
+				return menu.choices[menu.selected], nil
+			}
 			return string(data), nil
 		case 27:
-			// Ignore terminal navigation sequences rather than treating arrow keys as
-			// Back. A bare Esc is detected immediately, without requiring Enter.
-			if more, _ := ready(35); more {
-				if _, e = f.Read(one); e != nil {
-					return "", e
+			// A bare Esc edits history. CSI/SS3 sequences are bounded and never
+			// interpreted as approval; unknown navigation sequences are ignored.
+			sequence, bare, err := readWizardEscape(f, ready)
+			if err != nil {
+				return "", err
+			}
+			if bare {
+				return "", errWizardBack
+			}
+			if menu != nil {
+				delta := 0
+				switch sequence {
+				case "[A", "OA":
+					delta = -1
+				case "[B", "OB":
+					delta = 1
 				}
-				if one[0] == 3 {
-					fmt.Fprint(out, "^C\r\n")
-					return "", errWizardCanceled
-				}
-				if one[0] == 4 {
-					return "", io.EOF
-				}
-				if one[0] == '[' || one[0] == 'O' {
-					for i := 0; i < 24; i++ {
-						if more, _ = ready(35); !more {
-							break
-						}
-						if _, e = f.Read(one); e != nil {
-							return "", e
-						}
-						if one[0] == 3 {
-							fmt.Fprint(out, "^C\r\n")
-							return "", errWizardCanceled
-						}
-						if one[0] == 4 {
-							return "", io.EOF
-						}
-						if one[0] >= 0x40 && one[0] <= 0x7e {
-							break
-						}
-					}
-					continue
+				if delta != 0 {
+					menu.move(delta)
+					data, pending = nil, nil
+					menu.draw(out, "")
 				}
 			}
-			fmt.Fprint(out, "\r\n")
-			return "", errWizardBack
+			continue
 		case 8, 127:
 			if len(pending) > 0 {
 				pending = nil
@@ -113,7 +119,11 @@ func readWizardTerminal(ctx context.Context, f *os.File, out io.Writer, question
 			if len(data) > 0 {
 				_, size := utf8.DecodeLastRune(data)
 				data = data[:len(data)-size]
-				fmt.Fprint(out, "\b \b")
+				if menu == nil {
+					fmt.Fprint(out, "\b \b")
+				} else {
+					menu.draw(out, string(data))
+				}
 			}
 			continue
 		}
@@ -132,7 +142,47 @@ func readWizardTerminal(ctx context.Context, f *os.File, out io.Writer, question
 			return "", fmt.Errorf("terminal input exceeded 8 KiB")
 		}
 		data = append(data, pending...)
-		fmt.Fprint(out, string(pending))
+		if menu == nil {
+			fmt.Fprint(out, string(pending))
+		} else {
+			menu.draw(out, string(data))
+		}
 		pending = nil
 	}
+}
+
+// Distinguish a bare Esc from arrow keys, including application-cursor (SS3)
+// mode. Each continuation has a 35 ms deadline and sequences are capped at 24
+// bytes. Cancellation/EOF remains authoritative even inside an escape sequence.
+func readWizardEscape(f *os.File, ready func(int) (bool, error)) (string, bool, error) {
+	sequence := []byte{}
+	one := make([]byte, 1)
+	for i := 0; i < 24; i++ {
+		more, err := ready(35)
+		if err != nil {
+			return "", false, err
+		}
+		if !more {
+			return string(sequence), len(sequence) == 0, nil
+		}
+		if _, err := f.Read(one); err != nil {
+			return "", false, err
+		}
+		b := one[0]
+		if b == 3 {
+			return "", false, errWizardCanceled
+		}
+		if b == 4 {
+			return "", false, io.EOF
+		}
+		sequence = append(sequence, b)
+		if i == 0 {
+			if b != '[' && b != 'O' {
+				return "", true, nil
+			}
+		} else if b >= 0x40 && b <= 0x7e {
+			return string(sequence), false, nil
+		}
+	}
+	return string(sequence), false, fmt.Errorf("terminal escape sequence exceeded limit")
 }
