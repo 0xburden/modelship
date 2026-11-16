@@ -51,8 +51,10 @@ func defaultWizardDeps() wizardDeps {
 }
 func launchCommand(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("launch", flag.ContinueOnError)
+	plain := fs.Bool("plain", false, "use numbered text menus instead of arrow-key selectors")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "modelship launch — interactive model setup; use deploy MODEL --yes for automation")
+		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -66,7 +68,7 @@ func launchCommand(ctx context.Context, args []string) error {
 	if !terminalFile(os.Stdin) || !terminalFile(os.Stdout) {
 		return fmt.Errorf("launch requires terminal input and output; download install.sh and run it from a terminal, or use deploy MODEL --yes")
 	}
-	return runWizard(ctx, os.Stdin, os.Stdout, defaultWizardDeps())
+	return runWizardMode(ctx, os.Stdin, os.Stdout, defaultWizardDeps(), *plain)
 }
 
 type wizardUI struct {
@@ -89,6 +91,10 @@ func (w *wizardUI) explain(source, detail string) {
 }
 
 func (w *wizardUI) ask(label, fallback string, valid func(string) error) (string, error) {
+	return w.askChoice(label, fallback, valid, nil)
+}
+
+func (w *wizardUI) askChoice(label, fallback string, valid func(string) error, choices []string) (string, error) {
 	if w.session != nil {
 		s := w.session
 		if s.cursor < len(s.answers) {
@@ -108,13 +114,17 @@ func (w *wizardUI) ask(label, fallback string, valid func(string) error) (string
 		if err := w.ctx.Err(); err != nil {
 			return "", err
 		}
-		question := fmt.Sprintf("%s: ", label)
+		question := fmt.Sprintf("%s: ", terminalText(label))
 		if fallback != "" {
-			question = fmt.Sprintf("%s [%s]: ", label, fallback)
+			question = fmt.Sprintf("%s [%s]: ", terminalText(label), terminalText(fallback))
 		}
 		var line wizardLine
 		if w.session != nil && w.session.terminal != nil {
-			line.text, line.err = readWizardTerminal(w.ctx, w.session.terminal, w.out, question)
+			var menu *wizardMenu
+			if len(choices) > 0 {
+				menu = newWizardMenu(w.session, label, choices, w.labels, fallback)
+			}
+			line.text, line.err = readWizardInput(w.ctx, w.session.terminal, w.out, question, menu)
 		} else {
 			fmt.Fprint(w.out, question)
 			// A canceled signal must exit even while terminal input is waiting. The CLI
@@ -128,6 +138,9 @@ func (w *wizardUI) ask(label, fallback string, valid func(string) error) (string
 			}
 		}
 		if errors.Is(line.err, errWizardBack) || errors.Is(line.err, errWizardCanceled) || errors.Is(line.err, context.Canceled) || errors.Is(line.err, context.DeadlineExceeded) {
+			return "", line.err
+		}
+		if errors.Is(line.err, errWizardTerminalSize) {
 			return "", line.err
 		}
 		if line.err != nil {
@@ -182,7 +195,7 @@ func (w *wizardUI) selectChoice(label string, choices []string, fallback string,
 		return "", fmt.Errorf("no supported choices for %s", label)
 	}
 	if len(choices) == 1 && auto {
-		fmt.Fprintf(w.out, "%s: %s (only supported choice; selected automatically)\n", label, choices[0])
+		fmt.Fprintf(w.out, "%s: %s (only supported choice; selected automatically)\n", terminalText(label), terminalText(choices[0]))
 		return choices[0], nil
 	}
 	if w.session != nil && w.session.redoSet && w.session.cursor == len(w.session.answers) {
@@ -190,7 +203,13 @@ func (w *wizardUI) selectChoice(label string, choices []string, fallback string,
 			fallback = v
 		}
 	}
+	// Replay still goes through askChoice before any terminal input. Plain menus
+	// retain the same shortcuts and canonical history as the selector.
+	rich := newWizardMenu(w.session, label, choices, w.labels, fallback) != nil
 	for i, choice := range choices {
+		if rich {
+			break
+		}
 		letter := ""
 		if i < 26 {
 			letter = fmt.Sprintf(" / %c", 'a'+i)
@@ -203,24 +222,32 @@ func (w *wizardUI) selectChoice(label string, choices []string, fallback string,
 		if w.labels[choice] != "" {
 			display = w.labels[choice]
 		}
-		fmt.Fprintf(w.out, "  %d%s) %s%s\n", i+1, letter, display, mark)
+		fmt.Fprintf(w.out, "  %d%s) %s%s\n", i+1, letter, terminalText(display), mark)
 	}
-	value, e := w.ask(label+" (number, letter, or full value)", fallback, func(value string) error {
+	value, e := w.askChoice(label+" (number, letter, or full value)", fallback, func(value string) error {
 		if _, ok := choiceValue(value, choices); !ok {
 			return fmt.Errorf("Choose 1–%d, a letter, or a listed value", len(choices))
 		}
 		return nil
-	})
+	}, choices)
 	if e != nil {
 		return "", e
 	}
 	v, _ := choiceValue(value, choices)
+	if rich {
+		fmt.Fprintf(w.out, "%s: %s\n", terminalText(label), terminalText(v))
+	}
 	if w.session != nil && w.session.cursor > 0 {
 		w.session.answers[w.session.cursor-1] = v
 	}
 	return v, nil
 }
 func (w *wizardUI) confirm(message string) (bool, error) {
+	// Back may restore an option, but never a previous safety approval.
+	if w.session != nil && w.session.redoSet && w.session.cursor == len(w.session.answers) {
+		w.session.redo = "n"
+	}
+
 	value, err := w.ask(message+" (y/N)", "n", func(value string) error {
 		if !contains([]string{"y", "yes", "n", "no"}, strings.ToLower(value)) {
 			return fmt.Errorf("Enter y or n")
@@ -346,7 +373,7 @@ func (w *wizardUI) access(o *Options) (bool, error) {
 func runWizardAttempt(ctx context.Context, input io.Reader, output io.Writer, d wizardDeps, session *wizardSession) error {
 	w := wizardUI{session: session, ctx: ctx, in: session.reader, out: output}
 	fmt.Fprintln(output, "Modelship — guided model setup\nInspect → choose → review → deploy. No model tensor payloads, installs or keys before final confirmation.\nUse HF_TOKEN in your environment for gated/private repositories; never paste credentials here.")
-	fmt.Fprintln(output, "Press Enter to accept the value in brackets. Menus accept numbers, letters or full values; Esc goes back (or type :back). Ctrl-C cancels. Type a value to change it; y/N questions default to No. A single supported choice is selected automatically.\nDefaults below are labeled as detected, recipe-controlled, recommended presets, or safety choices—not promises of hardware capacity.")
+	fmt.Fprintln(output, "Press Enter to accept the value in brackets. Supported terminals offer Up/Down radio selectors; Enter confirms the highlighted value. Menus accept numbers, letters or full values; Esc goes back (or type :back). Ctrl-C cancels. Use launch --plain for numbered text menus. Type a value to change it; y/N questions default to No. A single supported choice is selected automatically.\nDefaults below are labeled as detected, recipe-controlled, recommended presets, or safety choices—not promises of hardware capacity.")
 	requested, err := w.ask("Hugging Face model page or org/repo", "", func(value string) error {
 		if strings.HasPrefix(value, "hf_") && len(value) > 25 {
 			return fmt.Errorf("Enter a model page, not a credential; use HF_TOKEN in your environment")
@@ -463,7 +490,7 @@ func runWizardAttempt(ctx context.Context, input io.Reader, output io.Writer, d 
 		}
 		model.GGUF.Vision = nil
 		if hasProjector {
-			w.explain("Input capability", "Text-only is the safety default. Vision loads the separately pinned F16 projector, adds memory/disk budgets and permits one uploaded image per conversation. It is image understanding, not image generation. Real-GPU image understanding is user-confirmed; coverage of all quants/hardware and peak memory is not established.")
+			w.explain("Input capability", "Text-only is the safety default. Vision loads the separately pinned F16 projector, adds memory/disk budgets and permits up to four uploaded images across turns (8 MiB / 8,388,608 aggregate pixels). It is image understanding, not image generation. Real-GPU image understanding is user-confirmed; coverage of all quants/hardware and peak memory is not established.")
 			mode, e := w.choose("Input mode", []string{"text-only", "vision-images"}, "text-only")
 			if e != nil {
 				return e
