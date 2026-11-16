@@ -21,7 +21,7 @@ func menuFixture() *wizardMenu {
 func TestWizardMenuViewportAndBoundaries(t *testing.T) {
 	m := menuFixture()
 	rows := m.rows("")
-	if len(rows) != 11 || !strings.Contains(strings.Join(rows, "\n"), "> (o) 13 / m) choice-13 (default)") || rows[1] != "Options 10-16 of 25" {
+	if len(rows) != 11 || !strings.Contains(strings.Join(rows, "\n"), "> (o) choice-13 (default)") || rows[1] != "Options 10-16 of 25" {
 		t.Fatal(rows)
 	}
 	m.move(100)
@@ -117,5 +117,25 @@ func TestWizardBackNeverRestoresPreviousApproval(t *testing.T) {
 		if err != nil || approved || !strings.Contains(out.String(), "[n]") || s.answers[0] != "n" {
 			t.Fatal(old, approved, err, out.String())
 		}
+	}
+}
+
+func TestWizardMenuCleanRadioDisplayAndPlainShortcuts(t *testing.T) {
+	m := &wizardMenu{label: "Input mode", choices: []string{"text-only", "vision-images"}, defaultValue: "text-only", selected: 0, width: 79, visible: 7}
+	rows := m.rows("")
+	display := strings.Join(rows, "\n")
+	if rows[0] != "Input mode" || !strings.Contains(display, "> (o) text-only (default)") || !strings.Contains(display, "  ( ) vision-images") {
+		t.Fatal(display)
+	}
+	for _, unwanted := range []string{"1 / a)", "2 / b)", "number", "letter", "Options", "Shortcut"} {
+		if strings.Contains(display, unwanted) {
+			t.Fatal("radio clutter", unwanted, display)
+		}
+	}
+	var out bytes.Buffer
+	w := wizardUI{ctx: context.Background(), session: &wizardSession{plain: true}, in: bufio.NewReader(strings.NewReader("b\n")), out: &out}
+	got, err := w.selectChoice("Input mode", m.choices, "text-only", false)
+	if err != nil || got != "vision-images" || !strings.Contains(out.String(), "1 / a) text-only") || !strings.Contains(out.String(), "(number, letter, or full value)") {
+		t.Fatal(got, err, out.String())
 	}
 }

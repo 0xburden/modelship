@@ -8,11 +8,17 @@ import struct
 import subprocess
 import sys
 import termios
+import tempfile
 import time
 
 
+def controlling_terminal():
+    os.setsid()
+    fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
+
 class Terminal:
-    def __init__(self, mode="menu", term="xterm-256color", size=(24, 80)):
+    def __init__(self, mode="menu", term="xterm-256color", size=(24, 80), extra_env=None, controlling=False):
         self.master, self.slave = pty.openpty()
         fcntl.ioctl(self.slave, termios.TIOCSWINSZ, struct.pack("HHHH", *size, 0, 0))
         self.original = termios.tcgetattr(self.slave)
@@ -20,7 +26,8 @@ class Terminal:
         self.process = subprocess.Popen(
             [sys.argv[1], "-test.run=^TestWizardSelectorHelperProcess$"],
             stdin=self.slave, stdout=self.slave, stderr=self.slave,
-            env={**os.environ, "MODELSHIP_SELECTOR_TEST_HELPER": mode, "TERM": term},
+            env={**os.environ, **(extra_env or {}), "MODELSHIP_SELECTOR_TEST_HELPER": mode, "TERM": term},
+            preexec_fn=controlling_terminal if controlling else None,
         )
 
     def expect(self, marker, start=0):
@@ -52,8 +59,10 @@ class Terminal:
 def case(keys, expected, mode="menu", **kwargs):
     terminal = Terminal(mode, **kwargs)
     try:
-        marker = b"Shortcut (number/letter/value):" if mode != "plain" and kwargs.get("term", "xterm") != "dumb" and kwargs.get("size", (24, 80))[1] >= 50 else b"(number, letter, or full value)"
+        marker = b"Selection:" if mode != "plain" and kwargs.get("term", "xterm") != "dumb" and kwargs.get("size", (24, 80))[1] >= 50 else b"(number, letter, or full value)"
         terminal.expect(marker)
+        if marker == b"Selection:":
+            assert b" / m)" not in terminal.data and b"number, letter, or full value" not in terminal.data, bytes(terminal.data)
         terminal.send(keys)
         terminal.finish(expected)
     finally:
@@ -87,14 +96,14 @@ def main():
     for mode in ("deadline", "menu"):
         terminal = Terminal(mode)
         try:
-            terminal.expect(b"Shortcut (number/letter/value):")
+            terminal.expect(b"Selection:")
             if mode == "menu": terminal.process.send_signal(signal.SIGINT)
             terminal.finish(b'value="" history=[] error=true')
         finally:
             terminal.close()
     terminal = Terminal()
     try:
-        terminal.expect(b"Shortcut (number/letter/value):")
+        terminal.expect(b"Selection:")
         terminal.send(b"\x1b")
         # Fragmented CSI within the existing 35 ms continuation window.
         time.sleep(0.005)
@@ -106,7 +115,7 @@ def main():
         terminal.close()
     terminal = Terminal()
     try:
-        terminal.expect(b"Shortcut (number/letter/value):")
+        terminal.expect(b"Selection:")
         fcntl.ioctl(terminal.slave, termios.TIOCSWINSZ, struct.pack("HHHH", 10, 40, 0, 0))
         terminal.send(b"\r")
         terminal.finish(b'value="" history=[] error=true')
@@ -114,9 +123,9 @@ def main():
         terminal.close()
     terminal = Terminal(mode="no-default")
     try:
-        terminal.expect(b"Shortcut (number/letter/value):")
+        terminal.expect(b"Selection:")
         start = terminal.send(b"\r")
-        terminal.expect(b"Choose 1", start)
+        terminal.expect(b"Select an option", start)
         terminal.send(b"25\r")
         terminal.finish(b'value="choice-25"')
     finally:
@@ -127,15 +136,15 @@ def main():
         terminal.send(b"org/model\r")
         terminal.expect(b"Model revision (branch, tag or commit)")
         terminal.send(b"\r")
-        terminal.expect(b"Backend (number, letter, or full value)")
+        terminal.expect(b"Backend\r\n")
         terminal.send(b"\r")
-        terminal.expect(b"GPU index (number, letter, or full value)")
+        terminal.expect(b"GPU index\r\n")
         terminal.send(b"\x1b[B\r")
         terminal.expect(b"Deployment name")
         terminal.send(b"\x1b")
         terminal.expect(b"Later selections/approvals were discarded")
         # Back refreshes discovery and restores GPU1 as the highlighted choice.
-        terminal.expect(b"> (o) 2 / b) GPU 1 (default)")
+        terminal.expect(b"> (o) GPU 1 (default)")
         start = terminal.send(b"\x1b[A\r")
         terminal.expect(b"Deployment name", start)
         terminal.send(b"fixture-name\r")
@@ -145,9 +154,9 @@ def main():
         terminal.send(b"\r")
         terminal.expect(b"Existing CUDA Python executable")
         terminal.send(b"\r")
-        terminal.expect(b"API access (number, letter, or full value)")
+        terminal.expect(b"API access\r\n")
         terminal.send(b"\r")
-        terminal.expect(b"API key (number, letter, or full value)")
+        terminal.expect(b"API key\r\n")
         terminal.send(b"\r")
         terminal.expect(b"Worker readiness wait")
         terminal.send(b"\r")
@@ -157,6 +166,45 @@ def main():
         terminal.finish(b"FIXTURE_SUMMARY deploys=0 keys=0 inspect=1 detect=2 cache=1 gpu=0 error=true")
     finally:
         terminal.close()
+    # Actual cooked-mode Ctrl-C on a controlling PTY stops only the viewer.
+    # A separately sessioned CPU fixture keeps writing after the wizard exits.
+    for wait_value in (b"0\r", b"\r"):
+        with tempfile.TemporaryDirectory() as directory:
+            log = os.path.join(directory, "service.log")
+            with open(log, "wb") as output:
+                worker = subprocess.Popen(
+                    [sys.executable, "-u", "-c", "import time\nwhile True:\n print('fixture worker heartbeat', flush=True)\n time.sleep(0.05)"],
+                    stdout=output, stderr=output, start_new_session=True,
+                )
+            terminal = Terminal(mode="wizard-logs", controlling=True, extra_env={"MODELSHIP_FIXTURE_LOG": log})
+            try:
+                for marker, answer in (
+                    (b"Hugging Face model page", b"org/model\r"),
+                    (b"Model revision (branch, tag or commit)", b"\r"),
+                    (b"Backend\r\n", b"\r"),
+                    (b"GPU index\r\n", b"\r"),
+                    (b"Deployment name", b"fixture-name\r"),
+                    (b"Inference API port", b"\r"),
+                    (b"Context window (tokens)", b"\r"),
+                    (b"Existing CUDA Python executable", b"\r"),
+                    (b"API access\r\n", b"\r"),
+                    (b"API key\r\n", b"\r"),
+                    (b"Worker readiness wait", wait_value),
+                    (b"(y/N) [n]", b"y\r"),
+                ):
+                    terminal.expect(marker)
+                    terminal.send(answer)
+                terminal.expect(b"Live logs")
+                terminal.expect(b"Ctrl-C to exit")
+                terminal.expect(b"fixture worker heartbeat")
+                terminal.send(b"\x03")
+                terminal.finish(b"FIXTURE_SUMMARY deploys=1 keys=0 inspect=1 detect=1 cache=1 gpu=0 error=false")
+                assert b"Exited log viewer. No stop request was sent." in terminal.data, bytes(terminal.data)
+                assert worker.poll() is None, "Ctrl-C stopped the retained worker"
+            finally:
+                terminal.close()
+                worker.terminate()
+                worker.wait(timeout=5)
     print("Wizard PTYs: selectors, scrolling, shortcuts, fallback, cancellation, replay and terminal restoration passed")
 
 
