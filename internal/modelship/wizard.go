@@ -33,6 +33,7 @@ type wizardDeps struct {
 	probe      func(context.Context, string, Plan) (TorchInfo, error)
 	createKey  func(string) error
 	deploy     func(context.Context, Plan, time.Duration) error
+	followLogs func(context.Context, string, string) error
 	executable string
 }
 
@@ -47,7 +48,15 @@ func defaultWizardDeps() wizardDeps {
 		hub.Token = os.Getenv("HF_TOKEN")
 		return hub.inspectGGUF(ctx, m, file)
 	}, inspect: inspectForPlan, detect: DetectForBackend, cache: InspectModelCache, build: BuildPlan, probe: probeTorch,
-		createKey: func(path string) error { _, err := generateAPIKey(path); return err }, deploy: Deploy, executable: exe}
+		createKey: func(path string) error { _, err := generateAPIKey(path); return err }, deploy: Deploy, followLogs: func(ctx context.Context, backend, name string) error {
+			if backend == "native" {
+				return ManageNative(ctx, "logs", name)
+			}
+			if backend == "docker" {
+				return Manage(ctx, "logs", name)
+			}
+			return fmt.Errorf("unsupported log backend")
+		}, executable: exe}
 }
 func launchCommand(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("launch", flag.ContinueOnError)
@@ -675,7 +684,7 @@ func runWizardAttempt(ctx context.Context, input io.Reader, output io.Writer, d 
 	if recipe.Kind == "video" {
 		waitDefault = "90m"
 	}
-	w.explain("Startup wait preset", "30m normally, 90m for video: how long to wait for the started worker to download/load and become ready—not a generation timeout, speed estimate, or pip/image-build deadline. 0 returns without waiting; timeout/interruption can leave the worker running.")
+	w.explain("Startup wait preset", "30m normally, 90m for video: how long to wait for the started worker to download/load and become ready—not a generation timeout, speed estimate, or pip/image-build deadline. 0 skips readiness waiting; the wizard follows live logs afterward. Ctrl-C exits the log viewer without stopping the worker. Timeout/interruption can leave the worker running.")
 	waitText, err := w.ask("Worker readiness wait (duration; 0 skips waiting)", waitDefault, func(v string) error {
 		t, e := time.ParseDuration(v)
 		if e != nil || t < 0 {
@@ -752,7 +761,7 @@ func runWizardAttempt(ctx context.Context, input io.Reader, output io.Writer, d 
 	writePlan(output, plan)
 	fmt.Fprintf(output, "Revision selection: %s -> pinned %s (no floating branch at deployment).\n", strconv.QuoteToASCII(revision), plan.Revision)
 	if wait == 0 {
-		fmt.Fprintln(output, "Readiness wait: skipped (0); the worker may still be downloading/loading after the CLI returns.")
+		fmt.Fprintln(output, "Readiness wait: skipped (0); the worker may still be downloading/loading; live logs open after submission.")
 	} else {
 		fmt.Fprintf(output, "Readiness wait: %s for worker startup only; this does not limit individual generations.\n", waitText)
 	}
@@ -795,6 +804,7 @@ func runWizardAttempt(ctx context.Context, input io.Reader, output io.Writer, d 
 	if nativeListen(plan) == "0.0.0.0" {
 		fmt.Fprintln(output, "Configure trusted HTTPS/provider forwarding for the selected port; no forwarding was changed automatically.")
 	}
+	wizardFollowLogs(ctx, output, d, o.Backend, plan.Name)
 	return nil
 }
 

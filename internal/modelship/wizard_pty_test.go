@@ -41,7 +41,7 @@ func TestWizardSelectorHelperProcess(t *testing.T) {
 		ctx, cancel = context.WithTimeout(ctx, 200*time.Millisecond)
 		defer cancel()
 	}
-	if mode == "wizard" {
+	if mode == "wizard" || mode == "wizard-logs" {
 		d, calls, _ := testWizardDeps(t, textFixture())
 		inspect, detect, cache, keys := 0, 0, 0, 0
 		plannedGPU := -1
@@ -59,6 +59,16 @@ func TestWizardSelectorHelperProcess(t *testing.T) {
 		}
 		d.cache = func(*Host, Model) { cache++ }
 		d.createKey = func(string) error { keys++; return nil }
+		if mode == "wizard-logs" {
+			d.followLogs = func(ctx context.Context, backend, name string) error {
+				if backend != "native" || name != "fixture-name" {
+					return fmt.Errorf("wrong fixture log target")
+				}
+				cmd := exec.CommandContext(ctx, "tail", "-n", "200", "-f", os.Getenv("MODELSHIP_FIXTURE_LOG"))
+				cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+				return cmd.Run()
+			}
+		}
 		err := runWizard(ctx, os.Stdin, os.Stdout, d)
 		fmt.Printf("FIXTURE_SUMMARY deploys=%d keys=%d inspect=%d detect=%d cache=%d gpu=%d error=%t\n", *calls, keys, inspect, detect, cache, plannedGPU, err != nil)
 		return
