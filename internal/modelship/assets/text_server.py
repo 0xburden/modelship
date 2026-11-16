@@ -31,7 +31,7 @@ TOKENIZER = None
 IMAGE_PROCESSOR = None
 NETWORK = None
 BUSY = threading.Lock()
-MAX_BODY = (8 if VISION_PROFILE else 1) * 1024 * 1024
+MAX_BODY = (12 if VISION_PROFILE else 1) * 1024 * 1024
 
 
 class Parameters(BaseModel):
@@ -72,15 +72,16 @@ class VisionChat(ChatParameters):
     messages: list[VisionMessage] = Field(min_length=1, max_length=128)
 
     @model_validator(mode="after")
-    def one_image(self):
-        if image_count(self.messages) > 1:
-            raise ValueError("one image is supported across a conversation request")
+    def bounded_images(self):
+        policy = getattr(IMAGE_PROCESSOR, "images_policy", None) or {}
+        if image_count(self.messages) > policy.get("max_images", 1):
+            raise ValueError("image count exceeds the saved conversation profile")
         return self
 
 
 @asynccontextmanager
 async def lifespan(app):
-    global NETWORK, TOKENIZER, IMAGE_PROCESSOR, TEXT_FEATURES
+    global NETWORK, TOKENIZER, IMAGE_PROCESSOR, TEXT_FEATURES, MAX_BODY
     if not MODEL or not REVISION:
         raise RuntimeError("MODEL_ID and immutable MODEL_REVISION are required")
     TOKENIZER = AutoTokenizer.from_pretrained(MODEL, revision=REVISION, trust_remote_code=False)
@@ -94,6 +95,7 @@ async def lifespan(app):
     if VISION_PROFILE:
         from gemma_vision import load_image_processor
         IMAGE_PROCESSOR = load_image_processor(VISION_PROFILE, MODEL, REVISION, RECIPE, loader_name, dtype_name, TOKENIZER)
+        MAX_BODY = (12 if getattr(IMAGE_PROCESSOR, "images_policy", None) else 8) * 1024 * 1024
     if loader_name == "multimodal-lm":
         from transformers import AutoModelForMultimodalLM
         loader = AutoModelForMultimodalLM
@@ -149,7 +151,7 @@ def models():
 @app.get("/v1/capabilities")
 def capabilities():
     from native_text import chat_controls
-    controls = chat_capabilities(bool(VISION_PROFILE), 280)
+    controls = chat_capabilities(bool(VISION_PROFILE), getattr(IMAGE_PROCESSOR, "max_tokens", 280), getattr(IMAGE_PROCESSOR, "images_policy", None))
     controls.update(chat_controls(TEXT_FEATURES))
     return {"schema_version": 1, "model": MODEL, "revision": REVISION, "run_id": RUN_ID,
             "runtime": "transformers", "profile": VISION_PROFILE or None,
@@ -167,9 +169,9 @@ def prepare_inputs(req, chat=False, thinking=False, move=True):
                 raise HTTPException(422, "model has no chat template for this recipe")
             if chat and VISION_PROFILE:
                 try:
-                    messages, images = normalize_messages(req.messages)
+                    messages, images = normalize_messages(req.messages, getattr(IMAGE_PROCESSOR, "images_policy", None))
                 except (ValueError, OSError):
-                    raise HTTPException(422, "invalid bounded image chat input; use one PNG/JPEG data image and accompanying text") from None
+                    raise HTTPException(422, "invalid bounded image chat input; use PNG/JPEG data images within per-image and aggregate limits") from None
             else:
                 messages = [message.model_dump() for message in req.messages] if chat else [{"role": "user", "content": req.prompt}]
             prompt = TOKENIZER.apply_chat_template(
@@ -227,9 +229,14 @@ def generate(req, chat=False):
         raise HTTPException(422, "thinking overrides are unavailable for this execution profile")
     if not BUSY.acquire(blocking=False):
         raise HTTPException(503, "GPU busy; retry after the current request finishes")
-    images = []
+    images, inputs, cuda_started, oom = [], {}, False, False
+    multi = getattr(IMAGE_PROCESSOR, "images_policy", None) is not None
     try:
-        inputs, count, images = prepare_inputs(req, chat)
+        inputs, count, images = prepare_inputs(req, chat, move=not multi)
+        if multi:
+            cuda_started = True
+            inputs = {key: value.to(device="cuda", dtype=torch.bfloat16) if key == "pixel_values"
+                      else value.to("cuda") for key, value in inputs.items()}
         with torch.inference_mode():
             output = NETWORK.generate(**inputs, **generation_kwargs(req))
         tokens = output[0, count:]
@@ -243,12 +250,29 @@ def generate(req, chat=False):
                 "usage": {"prompt_tokens": count, "completion_tokens": completion_tokens,
                           "total_tokens": count + completion_tokens}}
     except torch.OutOfMemoryError as exc:
-        torch.cuda.empty_cache()
+        oom = True
+        if not multi:
+            torch.cuda.empty_cache()
         raise HTTPException(503, "GPU out of memory; reduce context or stop competing workloads") from exc
     finally:
+        drained = True
+        if multi and cuda_started:
+            try:
+                torch.cuda.synchronize()
+                if oom:
+                    torch.cuda.empty_cache()
+            except Exception:
+                POISONED.set()
+                drained = False
         for image in images:
             image.close()
-        BUSY.release()
+        if drained:
+            if multi:
+                inputs.clear()
+            BUSY.release()
+        else:
+            DRAIN_REFS.append(inputs)
+            raise HTTPException(503, "CUDA drain failed; explicitly restart this worker") from None
 
 
 def prepare_feature_job(req):

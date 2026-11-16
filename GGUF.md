@@ -1,3 +1,5 @@
+> **Multi-image candidate (alpha.11):** new explicitly saved schema9 vision contracts for Gemma native, Qwen GGUF and Qwen native; see [MULTI_IMAGE.md](MULTI_IMAGE.md). Legacy workers remain one-image/text-only as originally approved. GPU multi-image confirmation is pending.
+
 # Experimental GGUF chat and vision (v0.3.0-alpha.7)
 
 **Published v0.3.0-alpha.6 remains text-only with the original single Q4 artifact.** The quantization menus, optional vision and schema 6 below target **v0.3.0-alpha.7**, the fresh version for this merge; alpha.6 assets are retained byte-for-byte. Alpha.6 repaired Ubuntu22.04 runtime compatibility. A user reports working GGUF text inference after that repair; we have not independently measured that deployment. **GGUF vision (interpretive/image understanding) is user-validated on a real GPU as of 2026-11-13.** Independent reproduction, quantization-wide coverage and peak-memory measurements are not established. CPU fixtures, source/ABI inspection and bounded real artifact headers are not GPU validation.

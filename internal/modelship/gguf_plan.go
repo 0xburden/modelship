@@ -19,6 +19,7 @@ type ArtifactPin struct {
 type GGUFVisionSpec struct {
 	File     ArtifactPin  `json:"file"`
 	Metadata GGUFMetadata `json:"metadata"`
+	Images   *ImagePolicy `json:"images,omitempty"`
 }
 
 type GGUFSpec struct {
@@ -129,8 +130,17 @@ func buildGGUFPlan(m Model, h Host, o Options) (Plan, error) {
 	if !driverAtLeast(p.GPU.Driver, 570, 26) || !computeAtLeast(p.GPU.Compute, 8, 0) {
 		p.Blockers = append(p.Blockers, "pinned GGUF CUDA12.8 runtime requires driver>=570.26 and compute capability>=8.0")
 	}
+	// A newly built reviewed vision plan explicitly opts in. Never upgrade an
+	// existing saved plan (nil Images) or mutate the inspected model's metadata.
+	if o.Vision {
+		spec, vision := *m.GGUF, *m.GGUF.Vision
+		policy := reviewedImagePolicy()
+		vision.Images = &policy
+		spec.Vision = &vision
+		p.GGUF = &spec
+	}
 	p.Files = nil
-	for _, pin := range ggufSelectedArtifacts(m.GGUF) {
+	for _, pin := range ggufSelectedArtifacts(p.GGUF) {
 		p.Files = append(p.Files, pin.Name)
 	}
 	p.WeightBytes, p.WeightResidentBytes = ggufBudgets(m.GGUF)
@@ -146,9 +156,14 @@ func buildGGUFPlan(m Model, h Host, o Options) (Plan, error) {
 	// runtime/recurrent-state/activation allowance. This is not a fit guarantee.
 	kv := meta.Layers * int64(p.Context) * meta.KVHeads * (meta.KeyLength + meta.ValueLength) * 2
 	p.EstimatedVRAMMiB = need + (kv+(1<<20)-1)/(1<<20) + 8192
-	if m.GGUF.Vision != nil {
-		p.EstimatedVRAMMiB += 2048
-		p.Warnings = append(p.Warnings, "Vision: one uploaded PNG/JPEG, 4 MiB/4,194,304-pixel input budget, at most 1024 image tokens, with upstream preprocessing/resizing; image tokens share the fixed context. The extra 2 GiB activation allowance is a heuristic, not measured peak memory.")
+	if p.GGUF.Vision != nil {
+		if reviewedGGUFImages(p.GGUF.Vision.Images) {
+			p.EstimatedVRAMMiB += 4096
+			p.Warnings = append(p.Warnings, "Vision: up to four uploaded static PNG/JPEG images across the conversation; each 4 MiB/4,194,304 pixels/4096-side, aggregate 8 MiB encoded image bytes/8,388,608 pixels. At most 1024 tokens per image (4096 total) share the fixed context with text/template/output; this is not a context-fit guarantee. The private runtime rejects expanded prompts that exceed context before generation. The extra 4 GiB activation allowance is an unmeasured heuristic, not measured peak memory.")
+		} else {
+			p.EstimatedVRAMMiB += 2048
+			p.Warnings = append(p.Warnings, "Vision: one uploaded PNG/JPEG, 4 MiB/4,194,304-pixel input budget, at most 1024 image tokens, with upstream preprocessing/resizing; image tokens share the fixed context. The extra 2 GiB activation allowance is an unmeasured heuristic, not measured peak memory.")
+		}
 	}
 	if p.EstimatedVRAMMiB > p.GPU.FreeMiB*90/100 {
 		if o.AllowRisk {

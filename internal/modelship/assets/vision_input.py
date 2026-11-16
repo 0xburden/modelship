@@ -36,7 +36,7 @@ ContentPart = Annotated[TextPart | ImagePart, Field(discriminator="type")]
 class VisionMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
     role: Literal["system", "user", "assistant"]
-    content: Annotated[str, Field(min_length=1, max_length=32768)] | Annotated[list[ContentPart], Field(min_length=1, max_length=4)]
+    content: Annotated[str, Field(min_length=1, max_length=32768)] | Annotated[list[ContentPart], Field(min_length=1, max_length=8)]
 
     @model_validator(mode="after")
     def bounded_content(self):
@@ -57,7 +57,7 @@ def image_count(messages):
                if isinstance(message.content, list) for part in message.content)
 
 
-def decode_image(url):
+def inspect_image(url):
     # Lazy import keeps legacy causal-LM text deployments independent of Pillow.
     from PIL import Image, ImageOps, UnidentifiedImageError
 
@@ -82,19 +82,40 @@ def decode_image(url):
                 if getattr(image, "n_frames", 1) != 1:
                     raise ValueError("animated images are not supported")
                 image.verify()
-            with Image.open(BytesIO(data)) as image:
-                image.load()
-                output = ImageOps.exif_transpose(image).convert("RGB")
-                output.info.clear()
-                return output
+            return data, width, height
     except (UnidentifiedImageError, OSError, SyntaxError, Image.DecompressionBombWarning, Image.DecompressionBombError):
         raise ValueError("image could not be decoded safely") from None
 
 
-def normalize_messages(messages):
-    """Return text/template parts and decoded PIL objects, never URI/path strings."""
-    if image_count(messages) > 1:
-        raise ValueError("one image is supported across the conversation request")
+def decode_image(url):
+    from PIL import Image, ImageOps
+    data, _, _ = inspect_image(url)
+    with Image.open(BytesIO(data)) as image:
+        image.load()
+        output = ImageOps.exif_transpose(image).convert("RGB")
+        output.info.clear()
+        return output
+
+
+def normalize_messages(messages, policy=None):
+    """Validate all aggregate budgets before decoding; preserve turn/image order."""
+    limits = policy or {"max_images": 1, "max_total_image_bytes": MAX_IMAGE_BYTES,
+                        "max_total_image_pixels": MAX_IMAGE_PIXELS}
+    urls = [part.image_url.url for message in messages if isinstance(message.content, list)
+            for part in message.content if isinstance(part, ImagePart)]
+    if len(urls) > limits["max_images"]:
+        raise ValueError("conversation image count exceeds the saved profile")
+    # Bound encoded input before allocating decoded buffers or inspecting pixels.
+    total = sum((len(url.split(",", 1)[-1]) // 4) * 3 - len(url) + len(url.rstrip("=")) for url in urls)
+    if total > limits["max_total_image_bytes"]:
+        raise ValueError("aggregate image byte budget exceeded")
+    pixels, actual = 0, 0
+    for url in urls:
+        data, width, height = inspect_image(url)
+        pixels += width * height
+        actual += len(data)
+        if pixels > limits["max_total_image_pixels"] or actual > limits["max_total_image_bytes"]:
+            raise ValueError("aggregate image budget exceeded")
     normalized, images = [], []
     try:
         for message in messages:
@@ -110,17 +131,20 @@ def normalize_messages(messages):
                         content.append({"type": "image"})
             normalized.append({"role": message.role, "content": content})
         return normalized, images
-    except Exception:
+    except BaseException:
         for image in images:
             image.close()
         raise
 
 
-def chat_capabilities(enabled, max_tokens=0):
+def chat_capabilities(enabled, max_tokens=0, policy=None):
     chat = {"image_input": enabled, "streaming": False, "tools": False, "max_output_tokens": 1024}
     if enabled:
-        chat.update(max_images=1, max_image_bytes=MAX_IMAGE_BYTES,
+        chat.update(max_images=(policy or {}).get("max_images", 1), max_image_bytes=MAX_IMAGE_BYTES,
                     max_image_pixels=MAX_IMAGE_PIXELS, max_image_dimension=MAX_IMAGE_DIMENSION,
                     image_mime_types=["image/png", "image/jpeg"], max_image_tokens=max_tokens,
                     recommended_image_side=768)
+        if policy:
+            chat.update(max_total_image_bytes=policy["max_total_image_bytes"],
+                        max_total_image_pixels=policy["max_total_image_pixels"])
     return chat

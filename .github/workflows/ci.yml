@@ -42,6 +42,10 @@ jobs:
         env:
           HF_HUB_OFFLINE: '1'
           HF_HUB_DISABLE_TELEMETRY: '1'
+      - run: python3 tests/qwen_processor_check.py
+        env:
+          HF_HUB_OFFLINE: '1'
+          HF_HUB_DISABLE_TELEMETRY: '1'
       - run: python3 tests/gemma_streamer_check.py
         env:
           HF_HUB_OFFLINE: '1'

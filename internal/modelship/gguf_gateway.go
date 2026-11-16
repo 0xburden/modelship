@@ -165,6 +165,9 @@ func (g *ggufGateway) generate(w http.ResponseWriter, r *http.Request, chat bool
 	limit := int64(1 << 20)
 	if g.visionEnabled() {
 		limit = 8 << 20
+		if reviewedGGUFImages(g.imagePolicy()) {
+			limit = 12 << 20
+		}
 	}
 	data, e := io.ReadAll(io.LimitReader(r.Body, limit+1))
 	if e != nil || int64(len(data)) > limit {
@@ -216,7 +219,7 @@ func (g *ggufGateway) generate(w http.ResponseWriter, r *http.Request, chat bool
 	}
 	var normalized []map[string]any
 	if chat {
-		normalized, e = validateGGUFMessages(messages, g.visionEnabled())
+		normalized, e = validateGGUFMessagesWithPolicy(messages, g.visionEnabled(), g.imagePolicy())
 		if e != nil {
 			g.fail(w, 422, e.Error())
 			return
@@ -224,6 +227,10 @@ func (g *ggufGateway) generate(w http.ResponseWriter, r *http.Request, chat bool
 	} else {
 		normalized = []map[string]any{{"role": "user", "content": *input.Prompt}}
 	}
+	// The pinned runtime expands MTMD input before its per-slot context check;
+	// see cd959bae tools/server/server-context.cpp:5351-5353, 4081-4088.
+	// --no-context-shift keeps this a fixed-context admission, not a promise that
+	// four 1024-token images plus text/template/output will fit this context.
 	body := map[string]any{"model": g.plan.Model, "messages": normalized, "max_tokens": tokens, "temperature": temp, "top_p": top, "stream": false, "n": 1, "top_k": 0, "min_p": 0, "chat_template_kwargs": map[string]bool{"enable_thinking": false}}
 	if input.Seed != nil {
 		body["seed"] = *input.Seed

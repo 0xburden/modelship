@@ -1,3 +1,5 @@
+> **Multi-image candidate (alpha.11):** new explicitly saved schema9 vision contracts for Gemma native, Qwen GGUF and Qwen native; see [MULTI_IMAGE.md](MULTI_IMAGE.md). Legacy workers remain one-image/text-only as originally approved. GPU multi-image confirmation is pending.
+
 # Native deployments
 
 Use this backend when host CUDA PyTorch works but Docker GPU passthrough does not (for example, the tested Thunder Compute server). The default backend remains Docker; select native explicitly for **every** lifecycle command.

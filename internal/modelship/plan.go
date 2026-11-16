@@ -357,7 +357,7 @@ func BuildPlan(m Model, h Host, o Options) (Plan, error) {
 			return p, e
 		}
 		if profile != nil {
-			p.Warnings = append(p.Warnings, "Native Gemma chat controls: real opt-in SSE and per-request enable_thinking; both off by default. Output remains capped at 1024 tokens including reasoning. Completion behavior is unchanged. Existing saved deployments are not upgraded; new schema-8 execution profile is required. Streaming/thinking GPU behavior and peak memory remain unmeasured.")
+			p.Warnings = append(p.Warnings, "Native Gemma chat controls: real opt-in SSE and per-request enable_thinking; both off by default. Output remains capped at 1024 tokens including reasoning. Completion behavior is unchanged. Existing saved deployments are not upgraded; new schema-8 execution profile is required. Basic Gemma streaming/thinking is user-reported working; peak memory and broader coverage remain unmeasured.")
 		}
 	}
 	if o.Vision {
@@ -366,11 +366,14 @@ func BuildPlan(m Model, h Host, o Options) (Plan, error) {
 			return p, e
 		}
 		p.Vision = profile
+		if profile.Images != nil && !contains(p.NativeRequirements, "numpy==2.3.5") {
+			p.NativeRequirements = append(p.NativeRequirements, "numpy==2.3.5")
+		}
 		if e = validateNativeVisionPlan(p); e != nil {
 			return p, e
 		}
 		p.EstimatedVRAMMiB += profile.ActivationAllowanceMiB
-		p.Warnings = append(p.Warnings, "Experimental PyTorch image understanding: one uploaded PNG/JPEG, 4 MiB / 4,194,304 pixels / 4096 per side. Gemma's reviewed PIL processor resizes to at most 280 image soft tokens; these share the fixed context. No URLs, audio/video/tools, quantization or CPU weight offload. The extra 2 GiB activation allowance is an unmeasured heuristic, not a peak-memory guarantee. Full checkpoint weights (including vision) are already counted; real image inference remains unvalidated.")
+		p.Warnings = append(p.Warnings, fmt.Sprintf("Experimental PyTorch image understanding: up to %d PNG/JPEG images across the conversation; each 4 MiB / 4,194,304 pixels / 4096 per side, aggregate 8 MiB / 8,388,608 pixels. Reviewed processor caps each image at %d tokens, sharing the fixed context. Full checkpoint weights (including vision) remain hard-gated. No worker-fetched URLs, audio/video/tools, quantization or CPU weight offload. Extra %d MiB activation allowance is an unmeasured heuristic, not peak-memory proof. New multi-image execution requires schema 9; old saved workers are not upgraded. Multi-image GPU validation is pending.", profile.Images.MaxImages, profile.MaxImageTokens, profile.ActivationAllowanceMiB))
 	}
 	if backend == "native" && h.ModelCacheInspected {
 		missing := p.WeightBytes - h.CachedWeightBytes

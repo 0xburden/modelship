@@ -1,4 +1,6 @@
-> **v0.3.0-alpha.10:** reviewed native Gemma E4B chat SSE and per-request thinking, both off by default, with schema8 execution/capability binding. Existing workers are not upgraded automatically; see [NATIVE_TEXT.md](NATIVE_TEXT.md). CPU-only streaming/decoder checks are not measured GPU validation.
+> **Alpha.11 candidate:** reviewed multi-image ingestion for exact Gemma native, Qwen GGUF and Qwen native profiles. New schema9 plans allow up to4 images with aggregate byte/pixel/context bounds; existing workers stay unchanged. See [MULTI_IMAGE.md](MULTI_IMAGE.md). Real multi-image GPU confirmation is pending.
+
+> **v0.3.0-alpha.10:** reviewed native Gemma E4B chat SSE and per-request thinking, both off by default, with schema8 execution/capability binding. Existing workers are not upgraded automatically; see [NATIVE_TEXT.md](NATIVE_TEXT.md). Gemma4 streaming and Thinking through Console are now user-reported working; exact hardware/requests/peak were not supplied. CPU fixtures remain separate evidence.
 
 > **v0.3.0-alpha.9:** fixes case-only Hugging Face URL/repository spellings hiding the Gemma vision menu. The inspector accepts the Hub's validated canonical spelling only for the same repository; the exact reviewed image-profile revision/architecture and opt-in remain mandatory. Unsupported Gemma selections now explain why image input is unavailable. No new GPU inference validation is claimed.
 

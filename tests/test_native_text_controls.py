@@ -97,6 +97,34 @@ class NativeTextControlTests(unittest.TestCase):
         b={'model':PROFILE['repo'],'messages':[{'role':'user','content':'Capital?'}],'max_tokens':64,'stream':stream,'expected_run_id':'b'*32}
         if thinking is not None:b['chat_template_kwargs']={'enable_thinking':thinking}
         return b
+    def test_multi_images_keep_streaming_thinking_dtypes_and_context(self):
+        import gemma_vision
+        import test_multi_image
+        adapter=gemma_vision.GemmaImageProcessor.__new__(gemma_vision.GemmaImageProcessor)
+        adapter.images_policy=test_multi_image.POLICY;adapter.max_tokens=280
+        def pixels(**kwargs):
+            n=len(kwargs['images']);fixture.CALLS.append(('pixels',kwargs))
+            return {'pixel_values':Tensor((n,2520,768),'fp32'),
+                    'image_position_ids':Tensor((n,2520,2),'int64'),
+                    'num_soft_tokens_per_image':[256]*n}
+        adapter.processor=pixels
+        Network.tokens=[100,200,201,202,101,203,204,205,106]
+        with TestClient(self.server.app) as client:
+            self.server.IMAGE_PROCESSOR=adapter;self.server.VISION_PROFILE='gemma4-e4b-images-v2'
+            request=self.body(True,True);request['messages']=test_multi_image.body([(2,2)]*4)['messages']
+            reply=client.post('/v1/chat/completions',json=request)
+            self.assertEqual(reply.status_code,200,reply.text)
+            self.assertIn('reasoning_content',reply.text);self.assertIn('[DONE]',reply.text)
+            self.assertIn('"prompt_tokens":1028',reply.text)
+            self.assertFalse(self.server.BUSY.locked())
+            inputs=next(c[1] for c in fixture.CALLS if c[0]=='generate')
+            self.assertEqual(inputs['pixel_values'].dtype,'bf16')
+            self.assertEqual(inputs['image_position_ids'].dtype,'int64')
+            fixture.CALLS.clear();self.server.CONTEXT=1024
+            reply=client.post('/v1/chat/completions',json=request)
+            self.assertEqual(reply.status_code,422)
+            self.assertFalse(any(c[0]=='generate' or c[0]=='move' and c[2]=='cuda' for c in fixture.CALLS))
+
     def test_capabilities_default_and_nonstream_thinking(self):
         with TestClient(self.server.app) as client:
             caps=client.get('/v1/capabilities').json()

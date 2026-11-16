@@ -1,5 +1,21 @@
 # Validation record
 
+## Alpha.11 multi-image candidate — CPU/package evidence
+
+New explicit schema9 profiles extend exact Gemma native and Qwen GGUF to up to4 conversation images and add separately reviewed native Qwen3.8 image understanding. Nil/old profiles remain single-image. Each image4MiB/4MP/4096-side; aggregate8MiB/8MP; fixed context, full weights, revision/processor/hash/metadata/access/security gates remain unchanged. +4GiB activation allowance is an unmeasured heuristic, not peak proof. See [MULTI_IMAGE.md](MULTI_IMAGE.md).
+
+Go race/vet passed, including old/new schemas, saved policy drift, budgets, gateway count/order/aggregate/body/static-PNG/admission and no hidden model substitution. Linux Python + packaged real CLI ran121 tests (118 passed,3 optional HTTP skipped); separately3 actual-nginx checks verified36 candidate/current-retained assets and exact/latest/no-store rules. Real Linux/AMD64 installer/version/catalog passed network-disabled. Alpha.10 published binary/installer/manifest were fetched and hash-verified for exact retention; alpha.11 is not published.
+
+The actual pinned Gemma PIL processor produced four ordered images with counts[256,266,266,280]; batch patches/positions matched independent single-image references. Actual pinned Qwen PIL + upstream placeholder/modality helpers passed1–4 images, per-image shapes/normalization/grids, order/turn boundaries, pixel limits, marker/config/version/token drift and failure cleanup checks in a Torch-/Hub-/weight-free environment; counts[64,300,300,1024], two4MP inputs→[1024,1024]. These are preprocessing/reference tests, not model inference. HTTP CPU fixtures additionally cover combined Gemma four-image SSE/thinking, context rejection before CUDA transfer, integer metadata/BF16 pixels, OOM/busy/drain ownership/quarantine and legacy one-image.
+
+Console0.5 CPU/production-container browser fixture verified ordered batches, atomic invalid-batch failure, remove/append, historical four-image replay hashes, stale worker409/no generation, fresh resubmit, full-count guidance, fifth-image422/no generation, two guarded URL imports without forwarded cookies/credentials, tab-only state and390px no overflow. It is not a real Console→GPU inference route proof. Disposable fixtures/QA browser/ephemeral credentials were removed.
+
+**Real GPU multi-image confirmation remains pending: Gemma first, then Qwen GGUF, then Qwen native PyTorch.** No user instance/worker was created/replaced/interrupted and no model tensors were downloaded. User-supplied test-server authorization is needed; Qwen native full BF16 weights alone exceed48GiB. Earlier user success reports are scoped below, not extrapolated to this feature.
+
+## User report after alpha.10
+
+User reports Gemma4 streaming and Thinking both work through their Console. This is a real-user success report, not an independently recorded benchmark; exact model revision, hardware, prompts, peak memory, disconnect/drain and restart coverage were not supplied. Earlier basic E4B single-image and Qwen GGUF image-understanding reports remain scoped separately. New multi-image and native Qwen image inference are not yet GPU-confirmed.
+
 ## Alpha.10 native Gemma chat controls (CPU evidence)
 
 The exact E4B text-control profile retains the reviewed model/revision, BF16 full weights, default-off thinking, max1024 total output tokens and all fit/security checks. New schema8 identity/worker-spec tests preserve legacy schemas and refuse profile drift/inherited flags. Local HTTP/ASGI CPU fixtures exercise default and explicit thinking, separate token-ID channels/usage, context before CUDA transfer, vision dtypes, auth, worker-run rejection, actual incremental output, output backpressure, disconnect/deadline/OOM and CUDA-drain ownership/poisoned readiness. The real pinned Transformers5.22.2 TextStreamer was tested without Torch/Hub/weights for split Unicode/CJK/channel handling and no generated stdout. No GPU inference, user instance changes or model tensor downloads were used.

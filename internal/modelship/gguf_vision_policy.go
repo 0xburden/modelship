@@ -9,9 +9,16 @@ import (
 const ggufProjectorFile = "mmproj-F16.gguf"
 const visionImageMaxTokens = 1024
 
+func reviewedGGUFImages(p *ImagePolicy) bool {
+	return p != nil && *p == reviewedImagePolicy()
+}
+
 func validateGGUFVision(v *GGUFVisionSpec) error {
 	if v == nil {
 		return fmt.Errorf("missing reviewed vision projector")
+	}
+	if v.Images != nil && !reviewedGGUFImages(v.Images) {
+		return fmt.Errorf("unsupported saved GGUF image policy")
 	}
 	pin, e := ggufArtifact(ggufRepo, ggufRevision, v.File.Name, true)
 	if e != nil {

@@ -30,7 +30,7 @@ func TestGemmaVisionFullWeightsAndSeparateActivationHeuristic(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if p.Vision == nil || p.Vision.MaxImageTokens != 280 || p.WeightResidentBytes != text.WeightResidentBytes || p.WeightBytes != text.WeightBytes || !reflect.DeepEqual(p.Files, text.Files) || p.EstimatedVRAMMiB != text.EstimatedVRAMMiB+2048 {
+	if p.Vision == nil || p.Vision.MaxImageTokens != 280 || p.WeightResidentBytes != text.WeightResidentBytes || p.WeightBytes != text.WeightBytes || !reflect.DeepEqual(p.Files, text.Files) || p.EstimatedVRAMMiB != text.EstimatedVRAMMiB+4096 {
 		t.Fatal("vision changed weight placement or omitted activation allowance", p.Vision)
 	}
 	if e = validateNativeVisionPlan(p); e != nil {
@@ -69,6 +69,7 @@ func TestGemmaVisionCannotBroadenModelsOrMixRuntimes(t *testing.T) {
 				o.Task = "text-to-image"
 			case "qwen":
 				m = targetFixture(t, "Qwen/Qwen3.8-27B")
+				m.Hub.SHA = strings.Repeat("e", 40)
 			}
 			if _, e := BuildPlan(m, h, o); e == nil {
 				t.Fatal("unreviewed PyTorch image path enabled")
@@ -96,7 +97,7 @@ func TestGemmaVisionNativeEnvAndSchemaBoundary(t *testing.T) {
 	_, _, _, p := gemmaImagePlan(t)
 	t.Setenv("MODEL_VISION_PROFILE", "untrusted")
 	env := strings.Join(nativeEnv(p, "test"), "\n")
-	if !strings.Contains(env, "MODEL_VISION_PROFILE=gemma4-e4b-image-v1") {
+	if !strings.Contains(env, "MODEL_VISION_PROFILE=gemma4-e4b-images-v2") {
 		t.Fatal("missing explicit processor profile")
 	}
 	specFound := false
@@ -129,7 +130,9 @@ func TestGemmaVisionNativeEnvAndSchemaBoundary(t *testing.T) {
 	}
 	// A legacy image plan predates per-request text controls.
 	p.TextFeatures = nil
-	for _, schema := range []int{5, 6, 7} {
+	profiles, _ := nativeVisionProfiles()
+	p.Vision = &profiles[0] // Exact legacy single-image profile remains supported.
+	for _, schema := range []int{5, 6, 7, 8, 9} {
 		cfg := NativeConfig{Schema: schema, Plan: p}
 		if e = writeJSONFile(filepath.Join(dir, "config.json"), cfg); e != nil {
 			t.Fatal(e)
