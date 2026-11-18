@@ -3,6 +3,7 @@
 #include "ggml-backend-impl.h"
 #include "ggml-backend.h"
 #include "ggml-cpu.h"
+#include "cuda-residency.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -32,6 +33,40 @@ void log_message(enum ggml_log_level, const char *message, void *data) {
 bool mark_eval(ggml_tensor *, bool, void *data) {
     static_cast<Diagnostics *>(data)->evaluated++;
     return false;
+}
+
+void check_residency(ggml_backend_t cpu, const ggml_tensor *source) {
+    using modelship::resident_tensor;
+    ggml_backend_reg reg{};
+    reg.iface.get_name = [](ggml_backend_reg_t) { return "CUDA"; };
+    auto device = *ggml_backend_get_device(cpu);
+    device.reg = &reg;
+    device.iface.get_type = [](ggml_backend_dev_t) { return GGML_BACKEND_DEVICE_TYPE_GPU; };
+    device.iface.get_name = [](ggml_backend_dev_t) { return "CUDA0"; };
+
+    auto type = *ggml_backend_buffer_get_type(source->buffer);
+    type.device = &device;
+    device.context = &type;
+    device.iface.get_buffer_type = [](ggml_backend_dev_t dev) {
+        return static_cast<ggml_backend_buffer_type_t>(dev->context);
+    };
+    require(!resident_tensor(&device, source), "CUDA name does not make host weights resident");
+    auto buffer = *source->buffer;
+    buffer.buft = &type;
+    auto tensor = *source;
+    tensor.buffer = &buffer;
+    require(!resident_tensor(&device, &tensor), "device-owned host buffer is still host storage");
+    type.iface.is_host = [](ggml_backend_buffer_type_t) { return false; };
+    require(resident_tensor(&device, &tensor), "synthetic ordinary CUDA0 buffer is admitted");
+    auto alternate = type;
+    buffer.buft = &alternate;
+    require(!resident_tensor(&device, &tensor), "alternate/split CUDA buffer rejected");
+    buffer.buft = &type;
+    device.iface.get_name = [](ggml_backend_dev_t) { return "CUDA1"; };
+    require(!resident_tensor(&device, &tensor), "CUDA1 cannot hold weights");
+    device.iface.get_name = [](ggml_backend_dev_t) { return "CUDA0"; };
+    tensor.data = nullptr;
+    require(!resident_tensor(&device, &tensor), "unallocated tensor rejected");
 }
 
 // A host-backed fake that records dispatch, only linked into this test. Real
@@ -128,6 +163,7 @@ int main() {
     float value = 0;
     ggml_backend_tensor_get(out, &value, 0, sizeof(value));
     require(value == sentinel, "no forbidden path wrote its output");
+    check_residency(cpu, a);
     check_order(out, second, mixed, cpu, diag);
 
     ggml_backend_buffer_free(buffer);

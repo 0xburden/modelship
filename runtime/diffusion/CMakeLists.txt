@@ -17,6 +17,7 @@ if(NOT IS_ABSOLUTE "${MODELSHIP_GGML_SOURCE}")
     message(FATAL_ERROR "Use an absolute path to a disposable ggml source tree")
 endif()
 include(cuda-placement.cmake)
+include(cuda-residency.cmake)
 add_subdirectory("${SD_SOURCE}" sd EXCLUDE_FROM_ALL)
 
 add_executable(modelship-placement-test EXCLUDE_FROM_ALL placement-test.cpp)
