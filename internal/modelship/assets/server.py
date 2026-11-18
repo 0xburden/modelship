@@ -168,11 +168,15 @@ def load_pipeline():
     )
 
 
-def configure_output_decode(vae):
-    if (MODEL, REVISION, PIPELINE, os.environ.get("MODEL_RECIPE"), os.environ.get("MODEL_NATIVE_LOADER")) == (
+def reviewed_native_qwen_image():
+    return (MODEL, REVISION, PIPELINE, os.environ.get("MODEL_RECIPE"), os.environ.get("MODEL_NATIVE_LOADER")) == (
         "Qwen/Qwen-Image-2.1", "d26bb61231c349cf6b7896fa83353113880e1ba3",
         "QwenImage21Pipeline", "qwen-image21", "qwen-image21",
-    ):
+    )
+
+
+def configure_output_decode(vae):
+    if reviewed_native_qwen_image():
         from qwen_image_decode import install_tiled_decode
 
         install_tiled_decode(vae)
@@ -272,6 +276,12 @@ def generate(req, task):
             # Condition images otherwise default to 1024-pixel preprocessing even
             # for a 256/512 request, escaping this service's image memory budget.
             args["output_resolution"] = math.isqrt(req.width * req.height) // 32 * 32
+            if task == EDIT and reviewed_native_qwen_image():
+                # Diffusers 0.42.1 uses this area target for both reference
+                # branches. Explicit width/height still set the output latent
+                # grid and its schedule. Keep the working small-edit reference
+                # budget for larger outputs without changing either dimension.
+                args["output_resolution"] = min(512, args["output_resolution"])
             if req.negative_prompt is not None and args["true_cfg_scale"] <= 1:
                 raise HTTPException(422, "negative_prompt requires guidance_scale > 1 for Qwen Image")
             if args["true_cfg_scale"] > 1:

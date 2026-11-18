@@ -168,7 +168,10 @@ class DualImageAPITests(unittest.TestCase):
                 self.assertEqual(edit["image"].mode, "RGBA" if qwen else "RGB")
                 self.assertEqual(edit.get("strength"), None if qwen else 0.7)
                 if qwen:
-                    self.assertEqual(edit["output_resolution"], 608)
+                    self.assertEqual(gen["output_resolution"], 608)
+                    self.assertEqual(edit["output_resolution"], 512)
+                    self.assertEqual((edit["width"], edit["height"]), (512, 768))
+                    self.assertEqual(again["output_resolution"], gen["output_resolution"])
                 else:
                     self.assertNotIn("width", edit)
                     _, pipe, wrapper = next(c for c in CALLS if c[0] == "wrap")
@@ -176,6 +179,31 @@ class DualImageAPITests(unittest.TestCase):
                     self.assertIs(pipe.unet, wrapper.unet)
                     self.assertIsNot(pipe.scheduler, wrapper.scheduler)
                 self.assertEqual(sum(c == ("drain",) for c in CALLS), 3)
+
+    def test_qwen_edit_reference_budget_is_independent_of_output_size(self):
+        self.configure(qwen=True)
+        body = {"prompt": "fixture", "image_b64": encoded_input(), "seed": 8,
+                "steps": 40, "guidance_scale": 1.0}
+        with TestClient(server.app) as client:
+            for width, height, reference in [(1024, 1024, 512), (256, 1024, 512), (512, 512, 512), (256, 512, 352)]:
+                response = client.post(self.EDIT, json={**body, "width": width, "height": height})
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(response.json()["seed"], 8)
+                args = [c[1] for c in CALLS if c[0] == "generate"][-1]
+                self.assertEqual((args["width"], args["height"]), (width, height))
+                self.assertEqual(args["output_resolution"], reference)
+                self.assertEqual(args["image"].size, (width, height))
+                self.assertEqual(args["true_cfg_scale"], 1.0)
+                self.assertEqual(args["num_inference_steps"], 40)
+        # Boot actual edit-only lifespans, not just a dual worker with a
+        # changed task label. An unrelated revision keeps its prior behavior.
+        for revision, reference in [(server.REVISION, 512), ("f" * 40, 1024)]:
+            with patch.multiple(server, TASK=server.EDIT, REVISION=revision), TestClient(server.app) as client:
+                self.assertTrue(client.get("/health").json()["ready"])
+                self.assertIsNone(server.EDIT_PIPE)
+                response = client.post(self.EDIT, json={**body, "width": 1024, "height": 1024})
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual([c[1] for c in CALLS if c[0] == "generate"][-1]["output_resolution"], reference)
 
     def test_qwen_decode_profile_only_on_the_pinned_native_worker(self):
         self.configure(qwen=True)

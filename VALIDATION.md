@@ -1,5 +1,24 @@
 # Validation record
 
+## Alpha.17 candidate — Qwen Image 2.1 high-resolution edits
+
+On the previous combined native worker (A6000, reviewed Qwen pin, no LoRA),
+a direct 1024×1024 edit replay produced a PNG identical to the user's Console
+output. It changed the requested color but distorted other detail. Changing
+only the requested output dimensions to 512×512, with the same input, prompt,
+seed, 40 steps and CFG 1, substantially reduced the distortion. The worker
+was not restarted or modified. This comparison varied both the reference
+and the output grids; it does not isolate the cause.
+
+The candidate keeps the explicit output grid and caps only the reference
+area target. Review of the pinned Diffusers call path confirms that
+`output_resolution` sizes the reference for both the text encoder and VAE;
+explicit dimensions control the generated latents and scheduler length.
+CPU HTTP fixtures check larger square and rectangular edits, smaller edits,
+edit-only and combined workers, and that generation, SDXL and unreviewed
+revisions remain unaffected. No candidate GPU quality or peak-memory result
+is claimed.
+
 ## Alpha.15 Qwen Image 2.1 VAE output seams
 
 A same-latent test on the existing A6000 moved color discontinuities when the
