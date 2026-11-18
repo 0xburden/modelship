@@ -1,0 +1,15 @@
+cmake_minimum_required(VERSION 3.24)
+project(modelship_diffusion_probe LANGUAGES C CXX)
+
+# No upstream CLI, HTTP server, Web UI, or dynamic plugin discovery.
+if(NOT IS_ABSOLUTE "${SD_SOURCE}")
+    message(FATAL_ERROR "Set SD_SOURCE to the verified upstream source directory")
+endif()
+add_subdirectory("${SD_SOURCE}" sd EXCLUDE_FROM_ALL)
+add_executable(modelship-sd-probe probe.cpp)
+set_target_properties(modelship-sd-probe PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+target_link_libraries(modelship-sd-probe PRIVATE stable-diffusion)
+target_compile_features(modelship-sd-probe PRIVATE cxx_std_17)
+if(SD_CUDA)
+    target_compile_definitions(modelship-sd-probe PRIVATE MODELSHIP_SD_CUDA)
+endif()

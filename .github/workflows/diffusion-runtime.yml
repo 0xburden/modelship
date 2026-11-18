@@ -1,0 +1,44 @@
+name: GGUF diffusion CUDA build probe
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/gguf-diffusion-runtime]
+    paths: ['runtime/diffusion/**', '.github/workflows/diffusion-runtime.yml']
+permissions:
+  contents: read
+concurrency:
+  group: diffusion-probe-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build-probe:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Free disk on this disposable GitHub-hosted runner
+        run: |
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          docker image prune --all --force
+          df -h /
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - name: Compile pinned core and check ELF ABI (no GPU)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: runtime/diffusion/Dockerfile
+          target: candidate
+          outputs: type=local,dest=diffusion-out
+          provenance: false
+      - name: Verify probe checksum and record ABI evidence
+        run: |
+          cd diffusion-out
+          sha256sum -c SHA256SUMS
+          cat SHA256SUMS evidence/dynamic.txt
+          tail -n 1 evidence/elf-abi.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: unvalidated-sd-cuda-probe-${{ github.run_id }}
+          path: diffusion-out/
+          if-no-files-found: error
+          retention-days: 7
