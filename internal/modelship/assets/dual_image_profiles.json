@@ -1,0 +1,24 @@
+[
+  {
+    "model": "Qwen/Qwen-Image-2.1",
+    "revision": "d26bb61231c349cf6b7896fa83353113880e1ba3",
+    "recipe": "qwen-image21",
+    "pipeline": "QwenImage21Pipeline",
+    "loader": "qwen-image21",
+    "diffusers": "0.42.1",
+    "dtype": "bfloat16",
+    "component_dtypes": {"vae": "float32"},
+    "research": true
+  },
+  {
+    "model": "stabilityai/stable-diffusion-xl-base-1.0",
+    "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+    "recipe": "sdxl",
+    "pipeline": "StableDiffusionXLPipeline",
+    "loader": "auto-pipeline",
+    "diffusers": "0.35.1",
+    "dtype": "float16",
+    "component_dtypes": {},
+    "research": false
+  }
+]

@@ -19,7 +19,7 @@ os.environ["MODEL_RUN_ID"] = args.run_id
 task = os.environ["MODEL_TASK"]
 if task == "text-generation":
     module = "text_server"
-elif task in ("text-to-image", "image-to-image"):
+elif task in ("text-to-image", "image-to-image", "image-generate-and-edit"):
     module = "server"
 elif task == "text-to-video":
     module = "video_server"

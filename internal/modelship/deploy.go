@@ -78,6 +78,9 @@ func buildImages(ctx context.Context) error {
 	return docker(ctx, "build", "--tag", ImageRuntime, dir)
 }
 func Deploy(ctx context.Context, p Plan, wait time.Duration) error {
+	if err := validateDualImagePlan(p); err != nil {
+		return err
+	}
 	if p.Backend == "native" {
 		return DeployNative(ctx, p, wait)
 	}

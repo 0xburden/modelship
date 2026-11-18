@@ -595,7 +595,13 @@ func runWizardAttempt(ctx context.Context, input io.Reader, output io.Writer, d 
 	} else {
 		w.explain("Recipe task default", "The adapter's first supported task, not a guessed capability. A deployment serves the selected task only.")
 	}
-	o.Task, err = w.choose("Task", recipe.Tasks, taskDefault)
+	tasks := imageTaskChoices(recipe, model, backend)
+	if contains(tasks, dualImageTask) {
+		w.explain("Optional generate + edit", "One worker exposes both image routes and serves one GPU request at a time. Single-task defaults are unchanged; the dual-mode budget includes an extra unmeasured 2048 MiB.")
+	} else if backend == "native" && (recipe.ID == "sdxl" || recipe.ID == "qwen-image21") {
+		w.explain("Generate + edit unavailable", "This exact model revision has no reviewed dual-mode profile. See IMAGE_GENERATE_EDIT.md for the supported pins; no revision was substituted.")
+	}
+	o.Task, err = w.choose("Task", tasks, taskDefault)
 	if err != nil {
 		return err
 	}

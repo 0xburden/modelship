@@ -195,7 +195,7 @@ func TestGGUFNativeStateBoundaryAndImmutableArtifacts(t *testing.T) {
 	if e = privateDir(dir); e != nil {
 		t.Fatal(e)
 	}
-	for _, schema := range []int{1, 2, 3, 4, nativeSchemaVersion + 1} {
+	for _, schema := range []int{1, 2, 3, 4, dualImageSchemaVersion + 1} {
 		cfg := NativeConfig{Schema: schema, Plan: p}
 		if e = writeJSONFile(filepath.Join(dir, "config.json"), cfg); e != nil {
 			t.Fatal(e)

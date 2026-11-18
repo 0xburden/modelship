@@ -1,5 +1,8 @@
 """HTTP contract tests with a fake GPU pipeline; no model download or CUDA needed."""
 from contextlib import nullcontext
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
+import hashlib
 import base64
 import importlib.util
 import io
@@ -65,6 +68,171 @@ sys.modules["diffusers"] = types.SimpleNamespace(
 spec = importlib.util.spec_from_file_location("modelship_image_server", ROOT / "internal/modelship/assets/server.py")
 server = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(server)
+
+
+def encoded_input():
+    image = io.BytesIO()
+    Image.new("RGB", (64, 64)).save(image, "PNG")
+    return base64.b64encode(image.getvalue()).decode()
+
+
+class DualImageAPITests(unittest.TestCase):
+    GEN = "/v1/images/generations"
+    EDIT = "/v1/images/edits"
+
+    def configure(self, *, qwen):
+        model, revision, pipeline, recipe, dtype, version, loader, component_dtypes, research = (
+            ("Qwen/Qwen-Image-2.1", "d26bb61231c349cf6b7896fa83353113880e1ba3", "QwenImage21Pipeline",
+             "qwen-image21", "bfloat16", "0.42.1", "qwen-image21", '{"vae":"float32"}', "true") if qwen else
+            ("stabilityai/stable-diffusion-xl-base-1.0", "462165984030d82259a11f4367a4eed129e94a7b", "StableDiffusionXLPipeline",
+             "sdxl", "float16", "0.35.1", "auto-pipeline", "{}", "false")
+        )
+        CALLS.clear()
+        self.enterContext(patch.multiple(server, MODEL=model, REVISION=revision, PIPELINE=pipeline, TASK=server.DUAL))
+        self.enterContext(patch.dict(os.environ, {
+            "MODEL_RECIPE": recipe, "MODEL_DTYPE": dtype, "MODEL_COMPONENT_DTYPES": component_dtypes,
+            "MODEL_NATIVE_LOADER": loader, "MODEL_RESEARCH": research, "MODEL_RUN_ID": "a" * 32,
+        }))
+
+        class Scheduler:
+            config = {"fixture": True}
+
+            @classmethod
+            def from_config(cls, config):
+                assert config == cls.config
+                return cls()
+
+        class XL(FakePipeline):
+            def __init__(self):
+                super().__init__()
+                self.unet, self.text_encoder, self.text_encoder_2 = object(), object(), object()
+                self.tokenizer, self.tokenizer_2 = object(), object()
+                self.scheduler = Scheduler()
+
+            def to(self, device):
+                CALLS.append(("move", device))
+                return self
+
+        class XLImg2Img(FakePipeline):
+            pass
+
+        class AutoEdit:
+            @classmethod
+            def from_pipe(cls, pipe, *, scheduler):
+                edit = XLImg2Img()
+                edit.__dict__.update(pipe.__dict__, scheduler=scheduler)
+                CALLS.append(("wrap", pipe, edit))
+                return edit
+
+        self.enterContext(patch.object(server, "AutoPipelineForText2Image", XL))
+        self.enterContext(patch.object(server, "AutoPipelineForImage2Image", AutoEdit))
+        self.enterContext(patch.dict(sys.modules, {"diffusers": types.SimpleNamespace(
+            __version__=version, QwenImage21Pipeline=FakePipeline,
+            EulerDiscreteScheduler=Scheduler, StableDiffusionXLPipeline=XL, StableDiffusionXLImg2ImgPipeline=XLImg2Img,
+        )}))
+        self.enterContext(patch.object(server.torch.cuda, "synchronize", lambda: CALLS.append(("drain",)), create=True))
+
+    def test_shared_routes_and_distinct_request_arguments(self):
+        for qwen in (False, True):
+            with self.subTest(qwen=qwen):
+                self.configure(qwen=qwen)
+                with TestClient(server.app) as client:
+                    health = client.get("/health").json()
+                    self.assertTrue(health["ready"])
+                    self.assertEqual(health["task"], server.GENERATE)
+                    self.assertEqual(health["image_tasks"], [server.GENERATE, server.EDIT])
+                    self.assertEqual(server.PIPE is server.EDIT_PIPE, qwen)
+                    before = {"prompt": "fixture", "seed": 42, "width": 512, "height": 768}
+                    for route, body in [(self.GEN, before), (self.EDIT, {**before, "image_b64": encoded_input()}), (self.GEN, before)]:
+                        response = client.post(route, json=body)
+                        self.assertEqual(response.status_code, 200, response.text)
+                        self.assertEqual(response.json()["seed"], 42)
+                    self.assertEqual(client.post(self.GEN, json={**before, "image_b64": encoded_input()}).status_code, 422)
+                    self.assertEqual(client.post(self.EDIT, json=before).status_code, 422)
+                loads = [c for c in CALLS if c[0] == "load"]
+                self.assertEqual(len(loads), 1)
+                self.assertEqual(loads[0][1], server.MODEL)
+                self.assertEqual(loads[0][2]["revision"], server.REVISION)
+                self.assertTrue(loads[0][2]["use_safetensors"])
+                self.assertFalse(loads[0][2]["trust_remote_code"])
+                self.assertEqual([c for c in CALLS if c[0] == "move"], [] if qwen else [("move", "cuda")])
+                gen, edit, again = [c[1] for c in CALLS if c[0] == "generate"]
+                self.assertNotIn("image", gen)
+                self.assertNotIn("image", again)
+                self.assertEqual(edit["image"].size, (512, 768))
+                self.assertEqual(edit["image"].mode, "RGBA" if qwen else "RGB")
+                self.assertEqual(edit.get("strength"), None if qwen else 0.7)
+                if qwen:
+                    self.assertEqual(edit["output_resolution"], 608)
+                else:
+                    self.assertNotIn("width", edit)
+                    _, pipe, wrapper = next(c for c in CALLS if c[0] == "wrap")
+                    self.assertIs(pipe.vae, wrapper.vae)
+                    self.assertIs(pipe.unet, wrapper.unet)
+                    self.assertIsNot(pipe.scheduler, wrapper.scheduler)
+                self.assertEqual(sum(c == ("drain",) for c in CALLS), 3)
+
+    def test_cross_route_busy_through_drain_in_both_directions(self):
+        self.configure(qwen=True)
+        for first, second in ((self.GEN, self.EDIT), (self.EDIT, self.GEN)):
+            draining, release = Event(), Event()
+
+            def synchronize():
+                draining.set()
+                if not release.wait(3):
+                    raise AssertionError("fixture failed to release drain")
+
+            def request(client, route):
+                return client.post(route, json={"prompt": "fixture", **({"image_b64": encoded_input()} if route == self.EDIT else {})})
+
+            with patch.object(server.torch.cuda, "synchronize", synchronize), TestClient(server.app) as client, ThreadPoolExecutor(1) as pool:
+                pending = pool.submit(request, client, first)
+                try:
+                    self.assertTrue(draining.wait(2))
+                    self.assertEqual(request(client, second).status_code, 503)
+                finally:
+                    release.set()
+                self.assertEqual(pending.result(timeout=2).status_code, 200)
+
+    def test_inference_or_drain_failure_disables_both_routes(self):
+        self.configure(qwen=False)
+        for error_at in ("pipeline", "drain"):
+            with self.subTest(error_at=error_at):
+                def fail(*args, **kwargs):
+                    raise OOM("private fixture details")
+
+                with TestClient(server.app) as client, (
+                    patch.object(FakePipeline, "__call__", fail) if error_at == "pipeline" else
+                    patch.object(server.torch.cuda, "synchronize", fail)
+                ):
+                    response = client.post(self.GEN, json={"prompt": "fixture"})
+                    self.assertEqual(response.status_code, 503, response.text)
+                    self.assertNotIn("private fixture details", response.text)
+                    health = client.get("/health").json()
+                    self.assertFalse(health["ready"])
+                    self.assertNotIn("image_tasks", health)
+                    self.assertEqual(client.post(self.EDIT, json={"prompt": "fixture", "image_b64": encoded_input()}).status_code, 503)
+
+    def test_bad_runtime_or_missing_consent_fails_before_loading(self):
+        self.configure(qwen=True)
+        for key, value in [("MODEL_RESEARCH", "false"), ("MODEL_DTYPE", "float16"), ("MODEL_RECIPE", "wrong")]:
+            with patch.dict(os.environ, {key: value}), self.assertRaisesRegex(RuntimeError, "dual-image"):
+                server.load_pipeline()
+        self.assertEqual(CALLS, [])
+
+    def test_both_routes_and_health_remain_behind_native_auth(self):
+        self.configure(qwen=True)
+        spec = importlib.util.spec_from_file_location("image_test_auth", ROOT / "internal/modelship/assets/api_auth.py")
+        auth = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(auth)
+        key = "a" * 43
+        protected = auth.BearerAuth(server.app, types.SimpleNamespace(digest=hashlib.sha256(key.encode()).digest()))
+        with TestClient(protected) as client:
+            self.assertEqual(client.get("/health").status_code, 401)
+            for route in (self.GEN, self.EDIT):
+                self.assertEqual(client.post(route, content=b"not a JSON body").status_code, 401)
+            self.assertEqual(client.get("/health", headers={"Authorization": f"Bearer {key}"}).json()["image_tasks"], [server.GENERATE, server.EDIT])
+            self.assertFalse(any(c[0] == "generate" for c in CALLS))
 
 
 class ImageAPITests(unittest.TestCase):
