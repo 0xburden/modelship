@@ -189,6 +189,57 @@ class DualImageAPITests(unittest.TestCase):
             with patch.dict(os.environ, {"MODEL_NATIVE_LOADER": "auto-pipeline"}), TestClient(server.app):
                 self.assertFalse(any(c[0] == "install-tiled-decode" for c in CALLS))
 
+    def test_reviewed_lora_contract_and_scope(self):
+        self.configure(qwen=True)
+        self.enterContext(patch.dict(os.environ, {"MODEL_LORA_ENABLED": "1"}))
+        lora_spec = importlib.util.spec_from_file_location("qwen_lora", ROOT / "internal/modelship/assets/qwen_lora.py")
+        lora = importlib.util.module_from_spec(lora_spec)
+        lora_spec.loader.exec_module(lora)
+        profile = lora.adapter_profile()
+        adapter = lora.ImageAdapter(profile)
+        lora.install_adapter = lambda transformer, spec: adapter
+        self.enterContext(patch.dict(sys.modules, {"qwen_lora": lora}))
+        self.enterContext(patch.object(FakePipeline, "transformer", object(), create=True))
+        original = FakePipeline.__call__
+        seen = []
+
+        def invoke(pipe, **kwargs):
+            seen.append(adapter.strength)
+            self.assertNotIn("lora_strength", kwargs)
+            self.assertNotIn("expected_run_id", kwargs)
+            if kwargs["prompt"] == "fail":
+                raise RuntimeError("fixture failure")
+            return original(pipe, **kwargs)
+
+        self.enterContext(patch.object(FakePipeline, "__call__", invoke))
+        body = {"prompt": "fixture", "expected_run_id": "a" * 32}
+        with TestClient(server.app) as client:
+            self.assertEqual(client.get("/health").json()["lora_revision"], profile["revision"])
+            caps = client.get("/v1/capabilities").json()
+            self.assertEqual(caps["image_lora"]["tasks"], [server.GENERATE, server.EDIT])
+            for bad in (True, "0.8", None, -0.1, 1.1):
+                self.assertEqual(client.post(self.GEN, json={**body, "lora_strength": bad}).status_code, 422)
+            self.assertEqual(client.post(self.GEN, json=body).status_code, 422)
+            self.assertEqual(client.post(self.GEN, json={"prompt": "fixture", "lora_strength": 0}).status_code, 422)
+            self.assertEqual(client.post(self.GEN, json={**body, "lora_strength": 0, "expected_run_id": "b" * 32}).status_code, 409)
+            self.assertEqual(seen, [])
+            self.assertEqual(client.post(self.GEN, json={**body, "lora_strength": 0.75}).status_code, 200)
+            self.assertEqual(client.post(self.EDIT, json={**body, "lora_strength": 1, "image_b64": encoded_input()}).status_code, 200)
+            self.assertEqual(client.post(self.GEN, json={**body, "lora_strength": 0}).status_code, 200)
+            self.assertEqual(client.post(self.GEN, json={"prompt": "fixture"}).status_code, 200)
+            self.assertEqual(seen, [0.75, 1, 0, 0])
+            self.assertEqual(client.post(self.GEN, json={**body, "lora_strength": .5, "prompt": "fail"}).status_code, 500)
+            self.assertEqual(adapter.strength, 0)
+            self.assertFalse(client.get("/health").json()["ready"])
+
+    def test_legacy_worker_refuses_explicit_lora_even_zero(self):
+        self.configure(qwen=True)
+        with TestClient(server.app) as client:
+            self.assertEqual(client.get("/v1/capabilities").status_code, 404)
+            self.assertEqual(client.post(self.GEN, json={"prompt": "fixture", "lora_strength": 0,
+                                                        "expected_run_id": "a" * 32}).status_code, 409)
+            self.assertFalse(any(c[0] == "generate" for c in CALLS))
+
     def test_cross_route_busy_through_drain_in_both_directions(self):
         self.configure(qwen=True)
         for first, second in ((self.GEN, self.EDIT), (self.EDIT, self.GEN)):

@@ -9,7 +9,7 @@ import os
 import secrets
 import threading
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 
 import torch
@@ -30,6 +30,7 @@ EDIT = "image-to-image"
 DUAL = "image-generate-and-edit"
 PIPE = None
 EDIT_PIPE = None
+ADAPTER = None
 UNHEALTHY = False
 BUSY = threading.Lock()
 
@@ -82,9 +83,14 @@ class Generation(BaseModel):
     seed: int | None = Field(default=None, ge=0, lt=2**63)
     image_b64: str | None = Field(default=None, max_length=22_369_624)
     strength: float | None = Field(default=None, gt=0, le=1)
+    lora_strength: float | None = Field(default=None, strict=True, ge=0, le=1, allow_inf_nan=False)
+    expected_run_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
 
     @model_validator(mode="after")
     def dimensions(self):
+        if {"lora_strength", "expected_run_id"} & self.model_fields_set:
+            if self.lora_strength is None or self.expected_run_id is None:
+                raise ValueError("explicit lora_strength and expected_run_id must be provided together")
         if self.width % 8 or self.height % 8:
             raise ValueError("width and height must be multiples of 8")
         if PIPELINE == "QwenImage21Pipeline":
@@ -175,8 +181,18 @@ def configure_output_decode(vae):
 
 @asynccontextmanager
 async def lifespan(app):
-    global PIPE, EDIT_PIPE, UNHEALTHY
+    global PIPE, EDIT_PIPE, UNHEALTHY, ADAPTER
     UNHEALTHY = False
+    lora_profile = None
+    if os.environ.get("MODEL_LORA_ENABLED") == "1":
+        from qwen_lora import adapter_profile, install_adapter
+
+        lora_profile = adapter_profile()
+        if ((MODEL, REVISION, PIPELINE) != (lora_profile["base_model"], lora_profile["base_revision"], "QwenImage21Pipeline")
+                or TASK not in (GENERATE, EDIT, DUAL)
+                or not re.fullmatch(r"[a-f0-9]{32}", os.environ.get("MODEL_RUN_ID", ""))):
+            raise RuntimeError("LoRA requires the reviewed native Qwen Image worker and run identity")
+        check_dual_profile()
     pipe = load_pipeline()
     if PIPELINE not in ("QwenImage21Pipeline", "MOSSImagePipeline"):
         pipe = pipe.to("cuda")
@@ -189,12 +205,14 @@ async def lifespan(app):
     pipe.set_progress_bar_config(disable=True)
     if edit is not None and edit is not pipe:
         edit.set_progress_bar_config(disable=True)
+    if lora_profile is not None:
+        ADAPTER = install_adapter(pipe.transformer, lora_profile)
     PIPE, EDIT_PIPE = pipe, edit
     try:
         yield
     finally:
         if not UNHEALTHY:
-            PIPE = EDIT_PIPE = pipe = edit = None
+            PIPE = EDIT_PIPE = pipe = edit = ADAPTER = None
             torch.cuda.empty_cache()
 
 
@@ -207,11 +225,28 @@ def health():
     return {"ready": ready, "model": MODEL, "revision": REVISION,
             "task": GENERATE if TASK == DUAL else TASK, "pipeline": PIPELINE,
             "recipe": os.environ.get("MODEL_RECIPE", ""), "run_id": os.environ.get("MODEL_RUN_ID", ""),
-            **({"image_tasks": [GENERATE, EDIT]} if TASK == DUAL and ready else {})}
+            **({"image_tasks": [GENERATE, EDIT]} if TASK == DUAL and ready else {}),
+            **({"lora_revision": ADAPTER.profile["revision"]} if ADAPTER is not None and ready else {})}
+
+
+@app.get("/v1/capabilities")
+def image_capabilities():
+    if ADAPTER is None:
+        raise HTTPException(404, "image controls unavailable")
+    state = health()
+    if not state["ready"]:
+        raise HTTPException(503, "image worker unavailable")
+    return {"schema_version": 1, "model": MODEL, "revision": REVISION, "run_id": state["run_id"],
+            "image_lora": {"repo": ADAPTER.profile["repo"], "revision": ADAPTER.profile["revision"],
+                           "trigger": ADAPTER.profile["trigger"], "tasks": [GENERATE, EDIT] if TASK == DUAL else [TASK],
+                           "parameter": "lora_strength", "min": 0, "max": 1, "default": 0}}
 
 
 def generate(req, task):
     global UNHEALTHY
+    if req.lora_strength is not None:
+        if ADAPTER is None or req.expected_run_id != os.environ.get("MODEL_RUN_ID"):
+            raise HTTPException(409, "LoRA adapter or worker run changed; refresh capabilities before submitting")
     if not BUSY.acquire(blocking=False):
         raise HTTPException(503, "GPU busy; retry after the current request finishes")
     try:
@@ -228,7 +263,7 @@ def generate(req, task):
             # The pinned edit processor expands these strings into visual
             # features. User-supplied markers can invalidate that alignment
             # before denoising; reject them before entering the pipeline.
-            if TASK == DUAL and any(marker in text
+            if (TASK == DUAL or ADAPTER is not None) and any(marker in text
                     for text in (req.prompt, req.negative_prompt or "")
                     for marker in ("<|image_pad|>", "<|video_pad|>", "<|vision_start|>",
                                    "<|vision_end|>", "<|placeholder|>")):
@@ -267,10 +302,10 @@ def generate(req, task):
         pipe = EDIT_PIPE if TASK == DUAL and task == EDIT else PIPE
         try:
             args["generator"] = torch.Generator(device="cpu" if PIPELINE == "MOSSImagePipeline" else "cuda").manual_seed(seed)
-            with torch.inference_mode():
+            with torch.inference_mode(), (ADAPTER.request(req.lora_strength or 0.0) if ADAPTER is not None else nullcontext()):
                 image = pipe(**args).images[0]
         except Exception as exc:
-            if TASK != DUAL:
+            if TASK != DUAL and ADAPTER is None:
                 raise
             # SDXL can upcast its shared VAE in place before a failure. A CUDA
             # drain alone cannot certify that the pipeline state was restored.
@@ -279,7 +314,7 @@ def generate(req, task):
                 raise HTTPException(503, "GPU out of memory; restart worker before reducing the workload") from None
             raise HTTPException(500, "image pipeline failed; restart worker before submitting again") from None
         finally:
-            if TASK == DUAL:
+            if TASK == DUAL or ADAPTER is not None:
                 try:
                     torch.cuda.synchronize()
                 except Exception:

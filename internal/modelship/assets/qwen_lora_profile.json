@@ -1,0 +1,10 @@
+{
+  "repo": "SEEDRAAI/Qwen-Image-2.1-LoRA-Polaroid",
+  "revision": "6bc9554265bd638a1167682c04a1802eb3c57ac0",
+  "file": "p0laroid_qwen_v1.safetensors",
+  "size": 167830408,
+  "sha256": "d0832a8ecd06b6d3c4292427e6901c0e7684720518e3a4774267e84a8a39d49c",
+  "base_model": "Qwen/Qwen-Image-2.1",
+  "base_revision": "d26bb61231c349cf6b7896fa83353113880e1ba3",
+  "trigger": "p0laroid"
+}

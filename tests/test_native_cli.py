@@ -186,7 +186,7 @@ class NativeCLIIntegrationTests(unittest.TestCase):
         self.assertTrue((self.dir/'api_auth.py').is_file())
         self.assertEqual((self.dir/'text_server.py').read_bytes(),original_text_module)
         restarted = self.cli('start')
-        self.assertEqual(restarted.returncode,0,restarted.stderr)
+        self.assertEqual(restarted.returncode,0,restarted.stderr + (self.dir/'service.log').read_text()[-4096:])
         self.assertTrue(json.loads(self.cli('status').stdout)['ready'])
         for path in ['/health','/docs','/openapi.json','/v1/videos/example/content']:
             with self.assertRaises(urllib.error.HTTPError) as error:
