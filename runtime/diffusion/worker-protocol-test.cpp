@@ -14,7 +14,7 @@ void check(bool ok, const char *message) {
 }
 
 void check_session(const std::string &input, int wanted_status, int wanted_calls, bool fail,
-                   std::initializer_list<unsigned char> wanted_tags) {
+                   std::initializer_list<unsigned char> wanted_tags, std::string_view wanted_prompt = "two cats") {
     const std::unique_ptr<FILE, decltype(&std::fclose)> in(std::tmpfile(), std::fclose);
     const std::unique_ptr<FILE, decltype(&std::fclose)> out(std::tmpfile(), std::fclose);
     check(in && out, "temporary file");
@@ -22,7 +22,7 @@ void check_session(const std::string &input, int wanted_status, int wanted_calls
     std::rewind(in.get());
     int calls = 0;
     const int status = serve(in.get(), out.get(), [&](uint32_t seed, std::string_view prompt, FILE *reply) {
-        check(seed == UINT32_MAX && prompt == "two cats", "request did not round trip");
+        check(seed == UINT32_MAX && prompt == wanted_prompt, "request did not round trip");
         ++calls;
         if (fail) return false;
         static const std::array<unsigned char, 4 * side * side> pixels{};
@@ -48,7 +48,8 @@ void check_session(const std::string &input, int wanted_status, int wanted_calls
 
 std::string request(const std::string &prompt) {
     std::string header(4, '\0');
-    header[3] = static_cast<char>(4 + prompt.size());
+    const auto length = static_cast<uint32_t>(4 + prompt.size());
+    for (unsigned i = 0; i < 4; ++i) header[i] = static_cast<char>(length >> (24 - 8 * i));
     return header + std::string(4, static_cast<char>(0xff)) + prompt;
 }
 } // namespace
@@ -57,7 +58,8 @@ int main() {
     check(valid_prompt("白い猫 🐈\ncaption"), "valid UTF-8 rejected");
     check(valid_prompt(std::string(max_prompt, 'a')), "prompt bound rejected");
     for (const auto *invalid : {"", " \t\n", "<image:source>", "<lora:style:1>", "<|vision_start|>",
-                                "\xc0\xaf", "\xed\xa0\x80", "\xf4\x90\x80\x80", "\xe2\x82", "\x1b"}) {
+                                "<tool_call>", "</think>", "<to()ol_call>", "((cat:999999999999999999999):999999999999999999999)",
+                                "cat [blue]", R"(cat \ dog)", "cat BREAK dog", "\xc0\xaf", "\xed\xa0\x80", "\xf4\x90\x80\x80", "\xe2\x82", "\x1b"}) {
         check(!valid_prompt(invalid), "invalid prompt accepted");
     }
     check(!valid_prompt(std::string_view("abc\0xyz", 7)), "embedded NUL accepted");
@@ -65,6 +67,9 @@ int main() {
     const std::string valid = request("two cats");
     check_session("", 0, 0, false, {'L'});
     check_session(request("<image:source>") + valid + valid, 0, 2, false, {'L', 'V', 'I', 'I'});
+    const std::string at_limit(max_prompt, 'a');
+    check_session(request(at_limit), 0, 1, false, {'L', 'I'}, at_limit);
+    check_session(request(at_limit + 'a') + valid, 1, 0, false, {'L'});
     check_session(valid + valid, 1, 1, true, {'L', 'F'});
     check_session(valid.substr(0, 3), 1, 0, false, {'L'});
     check_session(valid.substr(0, valid.size() - 1), 1, 0, false, {'L'});

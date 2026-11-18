@@ -34,7 +34,7 @@ The private protocol uses a four-byte big-endian body length followed by the bod
 
 | Direction | Body |
 | --- | --- |
-| Parent → worker | Four-byte big-endian seed, then 1–1,024 UTF-8 prompt bytes (no inline image, LoRA or reserved role/control tags). |
+| Parent → worker | Four-byte big-endian seed, then 1–1,024 UTF-8 prompt bytes (no angle brackets, parentheses, square brackets, backslashes or `BREAK` syntax; reject rather than rewrite). |
 | Worker → parent | `L`, byte `1`: context loaded, **not** public or warm-up readiness. |
 | Worker → parent | `I`, byte `3` or `4`, then contiguous RGB or RGBA bytes for exactly 512×512 pixels. Only sent after successful CUDA synchronization. |
 | Worker → parent | `V`: invalid prompt, no inference. |

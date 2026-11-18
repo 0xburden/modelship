@@ -15,8 +15,12 @@ inline uint32_t read_u32(const unsigned char *p) {
 }
 
 inline bool valid_prompt(std::string_view prompt) {
-    if (prompt.empty() || prompt.size() > max_prompt || prompt.find("<image:") != prompt.npos ||
-        prompt.find("<lora:") != prompt.npos || prompt.find("<|") != prompt.npos) {
+    // The pinned conditioner interprets attention punctuation before tokenizing,
+    // which can both synthesize role tags and multiply user weights. The first
+    // profile accepts neither that syntax nor angle-bracket tags. Don't strip
+    // or escape it: that could change the prompt or reach a different parser.
+    if (prompt.empty() || prompt.size() > max_prompt || prompt.find_first_of("<>()[\\]") != prompt.npos ||
+        prompt.find("BREAK") != prompt.npos) {
         return false;
     }
     bool nonblank = false;
