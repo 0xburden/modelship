@@ -8,7 +8,8 @@ permissions:
   contents: read
 concurrency:
   group: diffusion-probe-${{ github.ref }}
-  cancel-in-progress: true
+  # Preserve a running full CUDA build when a follow-up is pushed.
+  cancel-in-progress: false
 jobs:
   build-probe:
     runs-on: ubuntu-22.04
@@ -22,7 +23,7 @@ jobs:
           docker image prune --all --force
           df -h /
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
-      - name: Compile pinned core and check ELF ABI (no GPU)
+      - name: Test placement guard, compile CUDA, and check ELF ABI (no GPU)
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: .
