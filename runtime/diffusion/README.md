@@ -30,6 +30,8 @@ The worker is a child process, not a service. It uses the pinned C API and patch
 
 The future parent must verify the full runtime and three model component hashes, expose only the intended GPU, and pass a curated environment and a private immutable component directory. The worker checks the reviewed local names and byte counts before opening the models; that is not a substitute for hash verification. It requires one visible CUDA device, requests eager loading with no mmap or auto-fit, and checks the loaded model family. The parent needs a hard admission gate, process deadlines and exclusive ownership until the child drains or has been reaped. Do not run it against shared or unverified files.
 
+`candidate_preflight.py` implements the offline component checks and the NVIDIA inventory gate for a future smoke launcher. The proposed first test requires an idle, dedicated physical GPU with at least **40 GiB free** (compute capability 8.0+, driver 570.26+). This is a conservative, non-overridable test admission threshold, not a measured fit limit. A snapshot is not a reservation. The module does not download models, verify a CUDA runtime bundle, or launch the child. The weight-free tests run with `python3 -m unittest discover -s runtime/diffusion -p test_candidate_preflight.py`.
+
 The private protocol uses a four-byte big-endian body length followed by the body:
 
 | Direction | Body |
