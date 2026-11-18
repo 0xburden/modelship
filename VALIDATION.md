@@ -1,5 +1,39 @@
 # Validation record
 
+## Alpha.15 Qwen Image 2.1 VAE output seams
+
+A same-latent test on the existing A6000 moved color discontinuities when the
+stock decoder tile stride shifted from 192 to 160 pixels, confirming a tile
+boundary contribution. The candidate keeps the original stride and FP32 VAE,
+excludes a 24px halo on each inner tile edge and blends the remaining 16px
+with complementary smoothstep weights in both axes.
+
+A separate offline process ran the exact candidate decoder and stock
+Diffusers 0.42.1 decoder against the same latents for each synthetic scene. It
+used the cached pinned VAE, a 4 GiB allocator cap and a 12 GiB free-memory
+admission gate. The worker kept its PID, readiness and reported free VRAM.
+No model tensors were downloaded, and there was no live inference request or
+worker restart.
+
+| Size | Sky chroma discontinuity mean, stock → candidate | Sky chroma discontinuity max, stock → candidate | Peak PyTorch allocated decoder memory, MiB |
+| --- | ---: | ---: | ---: |
+| 512×512 | 0.2447 → 0.1189 | 3.4889 → 0.3442 | 1846.6 → 1848.6 |
+| 1024×1024 | 0.2308 → 0.1383 | 2.8130 → 0.3794 | 1868.9 → 1860.1 |
+
+The chroma metric measures the deviation of each column's green–magenta
+component from the average of its neighbors 10 pixels to either side, then
+averages the absolute deviation over sky rows. The mean and max over the
+measured overlap strips both improved. Mean absolute RGB change in the sky
+region was 0.152 and 0.142 on a 0–255 scale. These are decoder-only
+measurements, not full pipeline peak memory or a guarantee of seam-free
+images. Alpha.15 end-to-end generation and editing on a freshly deployed GPU
+worker were not tested.
+
+Weight-free numerical tests cover tile coverage, crop tails, two-axis corner
+blends, output shape/clamp and cleanup on rejected layouts or decoder failures.
+CPU HTTP fixtures check that the override is installed for all three reviewed
+native Qwen tasks and not for unreviewed revisions, other loaders or SDXL.
+
 ## Alpha.11 multi-image candidate — CPU/package evidence
 
 New explicit schema9 profiles extend exact Gemma native and Qwen GGUF to up to4 conversation images and add separately reviewed native Qwen3.8 image understanding. Nil/old profiles remain single-image. Each image4MiB/4MP/4096-side; aggregate8MiB/8MP; fixed context, full weights, revision/processor/hash/metadata/access/security gates remain unchanged. +4GiB activation allowance is an unmeasured heuristic, not peak proof. See [MULTI_IMAGE.md](MULTI_IMAGE.md).
