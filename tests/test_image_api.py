@@ -213,6 +213,19 @@ class DualImageAPITests(unittest.TestCase):
                     self.assertNotIn("image_tasks", health)
                     self.assertEqual(client.post(self.EDIT, json={"prompt": "fixture", "image_b64": encoded_input()}).status_code, 503)
 
+    def test_reserved_qwen_markers_do_not_poison_worker(self):
+        self.configure(qwen=True)
+        edit = {"prompt": "fixture", "image_b64": encoded_input()}
+        with TestClient(server.app) as client:
+            for field in ("prompt", "negative_prompt"):
+                response = client.post(self.EDIT, json={**edit, "guidance_scale": 2, field: "private <|image_pad|>"})
+                self.assertEqual(response.status_code, 422, response.text)
+                self.assertNotIn("private", response.text)
+            self.assertFalse(any(call[0] in ("generate", "drain") for call in CALLS))
+            self.assertEqual(client.get("/health").json()["image_tasks"], [server.GENERATE, server.EDIT])
+            self.assertEqual(client.post(self.GEN, json={"prompt": "valid"}).status_code, 200)
+            self.assertEqual(client.post(self.EDIT, json=edit).status_code, 200)
+
     def test_bad_runtime_or_missing_consent_fails_before_loading(self):
         self.configure(qwen=True)
         for key, value in [("MODEL_RESEARCH", "false"), ("MODEL_DTYPE", "float16"), ("MODEL_RECIPE", "wrong")]:

@@ -72,9 +72,22 @@ func TestDualImagePlanAndPolicy(t *testing.T) {
 					t.Fatalf("dual schema %d: %v", schema, e)
 				}
 			}
-			dual.NativeRequirements = nil
-			if validateDualImagePlan(dual) == nil {
-				t.Fatal("unversioned dual runtime accepted")
+			mutations := map[string]func(*Plan){
+				"no requirements": func(p *Plan) { p.NativeRequirements = nil },
+				"extra requirement": func(p *Plan) {
+					p.NativeRequirements = append(append([]string{}, p.NativeRequirements...), "extra==1.0")
+				},
+				"wrong Python minimum": func(p *Plan) { p.MinPython = "0.1" },
+				"wrong Torch minimum":  func(p *Plan) { p.MinTorch = "0.1" },
+				"no weight budget":     func(p *Plan) { p.WeightResidentBytes = 0 },
+				"no GPU identity":      func(p *Plan) { p.GPU.UUID = "" },
+			}
+			for name, change := range mutations {
+				invalid := dual
+				change(&invalid)
+				if validateDualImageExecution(invalid) == nil {
+					t.Errorf("accepted invalid dual plan: %s", name)
+				}
 			}
 		})
 	}

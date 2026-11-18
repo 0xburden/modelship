@@ -33,6 +33,7 @@ Both routes accept the same bounded JSON as their single-task equivalents:
 - `POST /v1/images/generations`: prompt and generation settings, no input image.
 - `POST /v1/images/edits`: prompt, settings, and one inline `image_b64` input.
   Qwen uses image conditioning, dimensions divisible by 32, and no `strength`.
+  Reserved Qwen vision markers are rejected in prompts and negative prompts.
   SDXL uses img2img `strength`. Neither worker fetches input URLs.
 
 New Console versions discover both modes from `/health` and offer **Generate

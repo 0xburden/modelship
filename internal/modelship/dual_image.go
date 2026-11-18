@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"slices"
+	"strings"
 )
 
 const dualImageTask = "image-generate-and-edit"
@@ -50,7 +52,16 @@ func validateDualImagePlan(p Plan) error {
 	if !ok || p.Backend != "native" || p.Runtime != "diffusers" || p.Vision != nil || p.GGUF != nil || p.TextFeatures != nil || p.TrustModelCode || p.CodeRevision != "" || len(p.CodeHashes) > 0 || p.NativeLoader != profile.Loader || p.DType != profile.DType || !maps.Equal(p.ComponentDTypes, profile.ComponentDTypes) || !contains(p.NativeRequirements, "diffusers=="+profile.Diffusers) {
 		return fmt.Errorf("%s requires an exact reviewed native Diffusers image recipe; see IMAGE_GENERATE_EDIT.md", dualImageTask)
 	}
-	return nil
+	catalog, err := LoadRecipes()
+	if err != nil {
+		return err
+	}
+	for _, recipe := range catalog.Recipes {
+		if recipe.ID == p.RecipeID && slices.Equal(p.NativeRequirements, recipe.NativeRequirements) && p.MinPython == recipe.MinPython && p.MinTorch == recipe.MinTorch {
+			return nil
+		}
+	}
+	return fmt.Errorf("dual image runtime requirements must match the reviewed recipe")
 }
 
 func validateDualImageExecution(p Plan) error {
@@ -58,6 +69,9 @@ func validateDualImageExecution(p Plan) error {
 		return err
 	}
 	if p.Task == dualImageTask {
+		if p.WeightResidentBytes <= 0 || strings.TrimSpace(p.GPU.UUID) == "" {
+			return fmt.Errorf("dual image execution requires a resident-weight budget and selected GPU identity; re-plan the deployment")
+		}
 		profile, _ := dualImageProfileFor(p.Model, p.Revision, p.Pipeline, p.RecipeID)
 		if profile.Research && !p.Research {
 			return fmt.Errorf("dual-image Qwen requires --research acknowledgment of non-commercial use")

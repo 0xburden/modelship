@@ -213,6 +213,14 @@ def generate(req, task):
             width=req.width, height=req.height,
         )
         if PIPELINE == "QwenImage21Pipeline":
+            # The pinned edit processor expands these strings into visual
+            # features. User-supplied markers can invalidate that alignment
+            # before denoising; reject them before entering the pipeline.
+            if TASK == DUAL and any(marker in text
+                    for text in (req.prompt, req.negative_prompt or "")
+                    for marker in ("<|image_pad|>", "<|video_pad|>", "<|vision_start|>",
+                                   "<|vision_end|>", "<|placeholder|>")):
+                raise HTTPException(422, "Qwen Image prompts cannot include reserved vision markers")
             args["true_cfg_scale"] = args.pop("guidance_scale")
             # Condition images otherwise default to 1024-pixel preprocessing even
             # for a 256/512 request, escaping this service's image memory budget.

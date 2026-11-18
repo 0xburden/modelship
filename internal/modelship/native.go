@@ -382,6 +382,9 @@ func runNativeInstall(ctx context.Context, python string, args ...string) error 
 	return cmd.Run()
 }
 func startNative(ctx context.Context, cfg NativeConfig, dir string, wait time.Duration) error {
+	if err := validateDualImageExecution(cfg.Plan); err != nil {
+		return err
+	}
 	if err := validateNativeTextPlan(cfg.Plan); err != nil {
 		return err
 	}
@@ -431,6 +434,9 @@ func startNative(ctx context.Context, cfg NativeConfig, dir string, wait time.Du
 	cmd.Stdout = log
 	cmd.Stderr = log
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err = ctx.Err(); err != nil {
+		return err
+	}
 	if err = cmd.Start(); err != nil {
 		return err
 	}
