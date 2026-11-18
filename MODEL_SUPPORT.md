@@ -203,7 +203,7 @@ Exports are private MP4s, <=64 MiB each; retention <=8 jobs/256 MiB and one-hour
 
 ## LoRA tooling: subsequent phase, not implemented yet
 
-Start with startup-time adapters rather than unauthenticated hot-swapping APIs:
+The exact SeedraAI Polaroid [native Qwen Image 2.1 LoRA](IMAGE_LORA.md) implements a startup-time adapter with optional per-request strength. Other adapter families and arbitrary uploads remain unsupported. Future profiles should follow these constraints:
 
 - Inspect adapter metadata, identify required base architecture, and report base-model dependencies instead of treating an adapter as standalone weights.
 - Pin both base and adapter repository revisions; select exact safetensors filenames and an explicit scale.

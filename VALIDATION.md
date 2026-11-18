@@ -401,3 +401,16 @@ Radio-menu cleanup regression coverage verifies labels/selection markers without
 Metadata/source review covered the exact Qwen Image 2.1 and SDXL base pins in [IMAGE_GENERATE_EDIT.md](IMAGE_GENERATE_EDIT.md). Linux/AMD64 Go race/vet and real terminal tests passed. Packaged-CLI and Python tests ran 127 cases (124 passed, 3 optional release HTTP cases verified separately). CPU fakes exercise a single load, shared Qwen pipeline, SDXL component reuse with separate scheduler, both endpoint payloads, reserved-marker rejection without loss of readiness, bearer auth, cross-route contention through CUDA drain, and restart-required failure handling. The fakes do not instantiate the real pipelines or measure GPU memory.
 
 The real nginx candidate passed three release HTTP checks, including 45 current/retained assets, exact latest installer and no-store headers. The network-disabled AMD64 installer smoke used the actual candidate bytes/checksums and verified version/catalog. Alpha.13 files remain byte-identical. No user worker or GPU was touched.
+
+## Qwen Image 2.1 LoRA (v0.3.0-alpha.16 candidate)
+
+[Image LoRA](IMAGE_LORA.md) is scoped to the reviewed Polaroid adapter on the
+pinned native Qwen Image 2.1 deployment. Validation read only the pinned
+safetensors header and upstream source; it did not download adapter tensor
+payloads or invoke a GPU. The 448 tensor names, shapes and BF16 dtypes match the
+reviewed target layout. Weight-free tests cover zero-strength bypass, the
+unfused forward delta and request-local reset, as well as API admission,
+run-identity mismatch, exclusive CUDA-drain handling, stopped-worker
+configuration and rollback, and retry after interrupted bundle staging. This
+does not establish output quality, loading
+compatibility with a real GPU, full-pipeline latency or peak VRAM.

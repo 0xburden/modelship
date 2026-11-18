@@ -52,7 +52,7 @@ modelship deploy stabilityai/stable-diffusion-xl-base-1.0 \
   --name images --port 8001 --wait 45m
 ```
 
-Use the JSON/base64 image API examples in `README.md`. For image-to-image, create a separate deployment with `--task image-to-image` and a distinct name/port; stop competing deployments as appropriate. One task is served per deployment. The image runtime is shared with the Docker adapter; the native entrypoint defaults to localhost; a network listener requires explicit bearer authentication.
+Use the JSON/base64 image API examples in `README.md`. Use `--task image-to-image` for a single editing endpoint, or see [IMAGE_GENERATE_EDIT.md](IMAGE_GENERATE_EDIT.md) for reviewed combined deployments. [IMAGE_LORA.md](IMAGE_LORA.md) covers the optional Polaroid adapter on stopped native Qwen Image workers. The image runtime is shared with the Docker adapter; the native entrypoint defaults to localhost; a network listener requires explicit bearer authentication.
 
 ## Experimental image/video families
 

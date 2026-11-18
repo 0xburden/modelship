@@ -1,4 +1,6 @@
-> **Alpha.15 candidate:** new native installations of the reviewed Qwen Image 2.1 pin use a [seam-reducing tiled VAE decoder](IMAGE_GENERATE_EDIT.md#qwen-image-21-output-seams) for both generation and edits. Same-latent decoder A/B measurements on an A6000 show smaller color discontinuities without a material change in decoder memory. This is not a full pipeline benchmark; existing workers are unchanged.
+> **Alpha.16 candidate:** add or remove the reviewed SeedraAI Polaroid [image LoRA](IMAGE_LORA.md) on a stopped native Qwen Image 2.1 deployment. Generation and edits accept optional per-request `lora_strength`; omission uses the base model.
+
+> **v0.3.0-alpha.15:** new native installations of the reviewed Qwen Image 2.1 pin use a [seam-reducing tiled VAE decoder](IMAGE_GENERATE_EDIT.md#qwen-image-21-output-seams) for both generation and edits. Same-latent decoder A/B measurements on an A6000 show smaller color discontinuities without a material change in decoder memory. This is not a full pipeline benchmark; existing workers are unchanged.
 
 > **v0.3.0-alpha.14:** opt-in [generation + editing on one native endpoint](IMAGE_GENERATE_EDIT.md) for exact Qwen Image 2.1 and SDXL pins. Single-task defaults are unchanged.
 
@@ -60,7 +62,7 @@ This first iteration does not add new model adapters, capability-driven generati
 - Text requires compute capability >=7.5 in Docker / >=7.0 natively; SD/SDXL >=7.0; FLUX >=8.0 (bfloat16).
 - **Experimental/native:** Gemma 4 and Qwen3.8 text by default (explicit Gemma image profile from alpha.8 documented above); Qwen Image 2.1 generation/editing; explicitly approved/hash-pinned MOSS images; bounded WAN video via an explicitly selected official Diffusers conversion. These need `--experimental` and model-specific resource/license/code prerequisites. See [MODEL_SUPPORT.md](MODEL_SUPPORT.md) for validation status; unvalidated adapters are not GPU-support guarantees.
 
-Not yet supported: general GGUF (only the pinned experimental text profile above), single-file image checkpoints, variant-only image repositories, adapters/LoRAs, AWQ/GPTQ/bitsandbytes, arbitrary remote model code, original WAN PTH checkpoints, FLUX.2, multi-GPU sharding, automatic quantization/offload, or arbitrary model architectures. Matching an architecture is a compatibility filter, **not** proof that every repository variant will load.
+Not yet supported: general GGUF (only the pinned experimental text profile above), single-file image checkpoints, variant-only image repositories, arbitrary adapters/LoRAs, AWQ/GPTQ/bitsandbytes, arbitrary remote model code, original WAN PTH checkpoints, FLUX.2, multi-GPU sharding, automatic quantization/offload, or arbitrary model architectures. Matching an architecture is a compatibility filter, **not** proof that every repository variant will load.
 
 ## Build
 

@@ -208,6 +208,10 @@ func ConfigureNative(ctx context.Context, name string, listen, key *string) erro
 		return err
 	}
 	defer unlock()
+	cfg, _, err = nativeConfig(name)
+	if err != nil {
+		return err
+	}
 	if run, e := loadNativeRun(dir); e == nil {
 		if nativeAlive(dir, run) {
 			return fmt.Errorf("stop the deployment before changing access settings; no worker was interrupted")
@@ -288,16 +292,17 @@ func nativeHealth(ctx context.Context, cfg NativeConfig, run NativeRun) (bool, s
 		return false, fmt.Sprintf("readiness HTTP %d", resp.StatusCode)
 	}
 	var health struct {
-		Ready      bool     `json:"ready"`
-		Model      string   `json:"model"`
-		Revision   string   `json:"revision"`
-		RunID      string   `json:"run_id"`
-		ImageTasks []string `json:"image_tasks"`
+		Ready        bool     `json:"ready"`
+		Model        string   `json:"model"`
+		Revision     string   `json:"revision"`
+		RunID        string   `json:"run_id"`
+		ImageTasks   []string `json:"image_tasks"`
+		LoRARevision string   `json:"lora_revision"`
 	}
 	if err = json.NewDecoder(io.LimitReader(resp.Body, 65536)).Decode(&health); err != nil {
 		return false, "invalid readiness response"
 	}
-	if !health.Ready || health.Model != cfg.Plan.Model || health.Revision != cfg.Plan.Revision || health.RunID != run.RunID || !imageHealthMatches(cfg.Plan.Task, health.ImageTasks) {
+	if !health.Ready || health.Model != cfg.Plan.Model || health.Revision != cfg.Plan.Revision || health.RunID != run.RunID || (!imageHealthMatches(cfg.Plan.Task, health.ImageTasks) || !loraHealthMatches(cfg.LoRA, health.LoRARevision)) {
 		return false, "worker identity/readiness mismatch"
 	}
 	return true, ""

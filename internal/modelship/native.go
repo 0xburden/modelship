@@ -35,6 +35,7 @@ const nativeSchemaVersion = 9 // Default for unchanged execution contracts.
 const dualImageSchemaVersion = 10
 
 type NativeConfig struct {
+	LoRA             *NativeLoRA   `json:"lora,omitempty"`
 	RuntimeBinary    string        `json:"runtime_binary,omitempty"`
 	RuntimeLibraries []string      `json:"runtime_libraries,omitempty"`
 	RuntimeFiles     []RuntimeFile `json:"runtime_files,omitempty"`
@@ -122,8 +123,11 @@ func nativeConfig(name string) (NativeConfig, string, error) {
 	if err = readJSONFile(filepath.Join(dir, "config.json"), &cfg); err != nil {
 		return cfg, dir, fmt.Errorf("read native deployment %s: %w", name, err)
 	}
-	if cfg.Schema < 1 || cfg.Schema > dualImageSchemaVersion || cfg.Plan.Backend != "native" || cfg.Plan.Name != name || !commitPattern.MatchString(cfg.Plan.Revision) || cfg.Plan.Port < 1024 || cfg.Plan.Port > 65535 {
+	if cfg.Schema < 1 || cfg.Schema > loraSchemaVersion || cfg.Plan.Backend != "native" || cfg.Plan.Name != name || !commitPattern.MatchString(cfg.Plan.Revision) || cfg.Plan.Port < 1024 || cfg.Plan.Port > 65535 {
 		return cfg, dir, fmt.Errorf("invalid native deployment metadata")
+	}
+	if err := validateLoRAConfig(cfg); err != nil {
+		return cfg, dir, err
 	}
 	if cfg.Schema < dualImageSchemaVersion && cfg.Plan.Task == dualImageTask {
 		return cfg, dir, fmt.Errorf("dual image routes require native schema 10")
@@ -207,6 +211,7 @@ func nativeEnv(p Plan, runID string) []string {
 		visionProfile = p.Vision.ID
 	}
 	overrides := map[string]string{
+		"MODEL_LORA_ENABLED": "",
 		"MODEL_TEXT_PROFILE": textProfile, "MODEL_TEXT_PROFILE_SPEC": encoded(p.TextFeatures, "null"),
 		"MODEL_VISION_PROFILE": visionProfile, "MODEL_VISION_PROFILE_SPEC": encoded(p.Vision, "null"),
 		"MODEL_LISTEN": nativeListen(p), "MODEL_API_KEY_FILE": p.APIKeyFile,
@@ -382,6 +387,14 @@ func runNativeInstall(ctx context.Context, python string, args ...string) error 
 	return cmd.Run()
 }
 func startNative(ctx context.Context, cfg NativeConfig, dir string, wait time.Duration) error {
+	if err := validateLoRAConfig(cfg); err != nil {
+		return err
+	}
+	if cfg.LoRA != nil {
+		if err := verifyLoRARuntime(dir, cfg.LoRA); err != nil {
+			return err
+		}
+	}
 	if err := validateDualImageExecution(cfg.Plan); err != nil {
 		return err
 	}
@@ -406,7 +419,7 @@ func startNative(ctx context.Context, cfg NativeConfig, dir string, wait time.Du
 	if err == nil && nativeAlive(dir, old) {
 		return fmt.Errorf("native deployment already running (PID %d)", old.PID)
 	}
-	if err := verifyWeightFitNow(ctx, cfg.Plan); err != nil {
+	if err := verifyWeightFitNow(ctx, loraWeightPlan(cfg)); err != nil {
 		return err
 	}
 	listener, err := net.Listen("tcp4", fmt.Sprintf("%s:%d", nativeListen(cfg.Plan), cfg.Plan.Port))
@@ -479,7 +492,17 @@ func NativeExec(ctx context.Context, name, runID string) error {
 		return runGGUFWorker(ctx, cfg, dir, runID)
 	}
 	python := filepath.Join(dir, "venv", "bin", "python")
-	return syscall.Exec(python, []string{python, "-u", filepath.Join(dir, "native_entry.py"), "--run-id", runID}, nativeEnv(cfg.Plan, runID))
+	root := dir
+	env := nativeEnv(cfg.Plan, runID)
+	if cfg.LoRA != nil {
+		root = loraRuntime(dir, cfg.LoRA)
+		for i, kv := range env {
+			if kv == "MODEL_LORA_ENABLED=" {
+				env[i] = "MODEL_LORA_ENABLED=1"
+			}
+		}
+	}
+	return syscall.Exec(python, []string{python, "-u", filepath.Join(root, "native_entry.py"), "--run-id", runID}, env)
 }
 func processIdentity(pid int) (string, string, error) {
 	if pid <= 1 {
@@ -535,7 +558,25 @@ func nativeAlive(dir string, run NativeRun) bool {
 		}
 		return false
 	}
-	return has(run.RunID) && (has(filepath.Join(dir, "native_entry.py")) || has("__native-run"))
+	if !has(run.RunID) {
+		return false
+	}
+	if has(filepath.Join(dir, "native_entry.py")) || has("__native-run") {
+		return true
+	}
+	for _, arg := range args {
+		if filepath.Base(arg) != "native_entry.py" {
+			continue
+		}
+		root := filepath.Dir(arg)
+		digest := filepath.Base(root)
+		if filepath.Dir(root) == filepath.Join(dir, loraBundle) && len(digest) == 64 {
+			if decoded, err := hex.DecodeString(digest); err == nil && hex.EncodeToString(decoded) == digest {
+				return true
+			}
+		}
+	}
+	return false
 }
 func waitNative(ctx context.Context, cfg NativeConfig, dir string, run NativeRun, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -554,18 +595,19 @@ func waitNative(ctx context.Context, cfg NativeConfig, dir string, run NativeRun
 		}
 		if resp, err := client.Do(req); err == nil {
 			var health struct {
-				Ready      bool     `json:"ready"`
-				Model      string   `json:"model"`
-				Revision   string   `json:"revision"`
-				RunID      string   `json:"run_id"`
-				ImageTasks []string `json:"image_tasks"`
+				Ready        bool     `json:"ready"`
+				Model        string   `json:"model"`
+				Revision     string   `json:"revision"`
+				RunID        string   `json:"run_id"`
+				ImageTasks   []string `json:"image_tasks"`
+				LoRARevision string   `json:"lora_revision"`
 			}
 			decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 65536)).Decode(&health)
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 				return fmt.Errorf("native readiness authentication rejected; worker retained; check key and restart after rotation")
 			}
-			if resp.StatusCode == 200 && decodeErr == nil && health.Ready && health.Model == cfg.Plan.Model && health.Revision == cfg.Plan.Revision && health.RunID == run.RunID && imageHealthMatches(cfg.Plan.Task, health.ImageTasks) {
+			if resp.StatusCode == 200 && decodeErr == nil && health.Ready && health.Model == cfg.Plan.Model && health.Revision == cfg.Plan.Revision && health.RunID == run.RunID && imageHealthMatches(cfg.Plan.Task, health.ImageTasks) && loraHealthMatches(cfg.LoRA, health.LoRARevision) {
 				return nil
 			}
 		}
@@ -634,7 +676,7 @@ func ManageNative(ctx context.Context, action, name string) error {
 		if state == "running" {
 			ready, healthError = nativeHealth(ctx, cfg, run)
 		}
-		return printJSON(map[string]any{"backend": "native", "name": name, "state": state, "pid": pid, "model": cfg.Plan.Model, "revision": cfg.Plan.Revision, "endpoint": fmt.Sprintf("http://127.0.0.1:%d", cfg.Plan.Port), "listen": nativeListen(cfg.Plan), "auth_enabled": cfg.Plan.APIKeyFile != "", "ready": ready, "health_error": healthError, "log": filepath.Join(dir, "service.log"), "torch": cfg.Torch, "runtime": cfg.Plan.Runtime, "gguf": cfg.Plan.GGUF, "vision": cfg.Plan.Vision, "text_features": cfg.Plan.TextFeatures})
+		return printJSON(map[string]any{"backend": "native", "name": name, "state": state, "pid": pid, "model": cfg.Plan.Model, "revision": cfg.Plan.Revision, "endpoint": fmt.Sprintf("http://127.0.0.1:%d", cfg.Plan.Port), "listen": nativeListen(cfg.Plan), "auth_enabled": cfg.Plan.APIKeyFile != "", "ready": ready, "health_error": healthError, "log": filepath.Join(dir, "service.log"), "torch": cfg.Torch, "runtime": cfg.Plan.Runtime, "gguf": cfg.Plan.GGUF, "vision": cfg.Plan.Vision, "text_features": cfg.Plan.TextFeatures, "lora": cfg.LoRA})
 	}
 	if action == "logs" {
 		cmd := exec.CommandContext(ctx, "tail", "-n", "200", "-f", filepath.Join(dir, "service.log"))
@@ -647,6 +689,10 @@ func ManageNative(ctx context.Context, action, name string) error {
 		return err
 	}
 	defer unlock()
+	cfg, _, err = nativeConfig(name)
+	if err != nil {
+		return err
+	}
 	switch action {
 	case "start":
 		return startNative(ctx, cfg, dir, 30*time.Minute)

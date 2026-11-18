@@ -30,6 +30,8 @@ Commands:
   smoke --name NAME                 Generate a short text completion
   auth-keygen [--file PATH]          Create a private API key (never printed)
   configure --backend native --name NAME --listen IP --api-key-file PATH
+  lora add [--name NAME] [--research --yes] HF_URL  Preview/configure reviewed image adapter
+  lora remove [--name NAME] --yes                   Restore stopped base worker
   version
   notices                            Print bundled third-party Go dependency notices
 
@@ -83,6 +85,8 @@ func Run(args []string, version string) error {
 		return NativeExec(ctx, args[1], args[2])
 	case "auth-keygen":
 		return authKeygenCommand(args[1:])
+	case "lora":
+		return loraCommand(ctx, args[1:])
 	case "configure":
 		return configureNativeCommand(ctx, args[1:])
 	case "catalog":
