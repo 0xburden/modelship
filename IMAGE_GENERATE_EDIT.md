@@ -49,8 +49,8 @@ A **new native deployment** is required. Updating the CLI, stopping/starting an
 old worker, or changing its access settings does not add a route. Do not replace
 or stop a working service just to try dual mode; use a distinct name and port
 and check available VRAM first. Dual deployments use native schema 10. Existing
-single-task deployments retain their execution behavior. Combined-mode tests
-use CPU fixtures; GPU behavior and peak VRAM are not yet verified for this mode.
+single-task deployments retain their saved execution behavior. See
+[VALIDATION.md](VALIDATION.md) for scoped GPU and CPU results.
 
 ## Qwen Image 2.1 output seams
 
@@ -67,3 +67,23 @@ artifact. See [the decoder-only GPU A/B](VALIDATION.md#alpha15-qwen-image-21-vae
 Updating the CLI, restarting an existing worker or changing access settings
 won't update that worker's saved runtime. Test a new deployment when you can
 schedule it; it still needs to pass the usual free-memory and disk checks.
+
+## Qwen Image 2.1 high-resolution edit conditioning
+
+The alpha.17 candidate caps the reference area target for edits at **512²**
+(upstream rounds reference dimensions to multiples of 32). It applies to
+native edit-only and combined workers of the reviewed Qwen pin that use
+this release's runtime assets, including a newly staged LoRA runtime. An
+existing worker's saved runtime is not updated by a CLI upgrade or restart.
+The requested output width and height still set the generated latent grid:
+1024×1024 still requests a 1024×1024 image. Smaller reference targets are
+unchanged. Generation, the sampler, LoRA strength, and the output decoder are
+unchanged. No API or Console changes are required.
+
+A direct GPU replay on the previous runtime reproduced a distorted 1024×1024
+edit; the same request at 512×512 preserved the source detail much better.
+That comparison varied both reference and output grids. CPU tests verify
+that the candidate separates the two, but **the candidate's 1024×1024 visual
+quality still needs a same-input GPU replay**. For existing workers, output
+at 512×512 is the tested workaround for this case; no general quality or VRAM
+guarantee is implied.
