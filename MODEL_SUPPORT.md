@@ -151,7 +151,7 @@ modelship plan Wan-AI/Wan2.2-T2V-A14B --backend native --experimental \
 
 ### Qwen Image 2.1
 
-`QwenImage21Pipeline` serves generation and image-conditioned editing; do not use the SDXL AutoPipeline/strength contract. A separate deployment chooses `--task image-to-image` and `/v1/images/edits` with inline `image_b64` (RGBA preserved). Both tasks use the same pinned model weights/cache.
+`QwenImage21Pipeline` serves generation and image-conditioned editing; do not use the SDXL AutoPipeline/strength contract. A separate deployment chooses `--task image-to-image` and `/v1/images/edits` with inline `image_b64` (RGBA preserved). Both tasks use the same pinned model weights/cache. For the exact reviewed Qwen Image 2.1 and SDXL revisions, [dual mode](IMAGE_GENERATE_EDIT.md) serves both routes from one new native deployment.
 
 Dimensions are 256–1024 and divisible by **32**. `guidance_scale` defaults to **1.0**, mapped to `true_cfg_scale`; negative prompts require a scale >1. `strength` is rejected, rather than ignored. Input conditioning resolution is explicitly bounded to the request area. The dedicated adapter bridges BF16 conditioning pixels into the FP32 VAE, then casts encoded latents back to BF16; this avoids the pinned upstream mixed-precision editing mismatch. Modern image prompts have a 4096-character limit. VAE is FP32, transformer/text encoder BF16; generation defaults to 28 steps (API cap 100), one request at a time. These bounds are not proof of peak-memory fit.
 

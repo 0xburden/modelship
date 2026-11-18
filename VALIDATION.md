@@ -361,3 +361,9 @@ The exact selected artifact/quantization, GPU, input/output, memory figures, Con
 Local candidate checks passed: Linux AMD64 Go race/vet including controlling-PTY tests; packaged Linux CLI/Python 121 tests (118 passed, three optional HTTP tests skipped); the three real-nginx HTTP tests separately passed with all 42 release assets, followed by a network-disabled AMD64 installer/version/catalog smoke. Staged secret scan found no leaks. No user worker or GPU was touched.
 
 Radio-menu cleanup regression coverage verifies labels/selection markers without number/letter prefixes or legacy input hints; position ranges remain for scrolling lists only. Existing numeric/letter/full-value shortcuts, plain fallback labels, Back/default/history, bounds, cancellation and real PTY post-deployment Ctrl-C checks remain in place.
+
+## Alpha.14 native generation + editing candidate
+
+Metadata/source review covered the exact Qwen Image 2.1 and SDXL base pins in [IMAGE_GENERATE_EDIT.md](IMAGE_GENERATE_EDIT.md). Linux/AMD64 Go race/vet and real terminal tests passed. Packaged-CLI and Python tests ran 127 cases (124 passed, 3 optional release HTTP cases verified separately). CPU fakes exercise a single load, shared Qwen pipeline, SDXL component reuse with separate scheduler, both endpoint payloads, reserved-marker rejection without loss of readiness, bearer auth, cross-route contention through CUDA drain, and restart-required failure handling. The fakes do not instantiate the real pipelines or measure GPU memory.
+
+The real nginx candidate passed three release HTTP checks, including 45 current/retained assets, exact latest installer and no-store headers. The network-disabled AMD64 installer smoke used the actual candidate bytes/checksums and verified version/catalog. Alpha.13 files remain byte-identical. No user worker or GPU was touched.

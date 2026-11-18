@@ -31,7 +31,8 @@ type TorchInfo struct {
 // Schema 9 records explicit multi-image ingestion policies. Schemas 1–8
 // remain readable without silently acquiring new image behavior.
 // Older CLIs must reject it instead of ignoring these execution constraints.
-const nativeSchemaVersion = 9
+const nativeSchemaVersion = 9 // Default for unchanged execution contracts.
+const dualImageSchemaVersion = 10
 
 type NativeConfig struct {
 	RuntimeBinary    string        `json:"runtime_binary,omitempty"`
@@ -121,8 +122,14 @@ func nativeConfig(name string) (NativeConfig, string, error) {
 	if err = readJSONFile(filepath.Join(dir, "config.json"), &cfg); err != nil {
 		return cfg, dir, fmt.Errorf("read native deployment %s: %w", name, err)
 	}
-	if (cfg.Schema != 1 && cfg.Schema != 2 && cfg.Schema != 3 && cfg.Schema != 4 && cfg.Schema != 5 && cfg.Schema != 6 && cfg.Schema != 7 && cfg.Schema != 8 && cfg.Schema != nativeSchemaVersion) || cfg.Plan.Backend != "native" || cfg.Plan.Name != name || !commitPattern.MatchString(cfg.Plan.Revision) || cfg.Plan.Port < 1024 || cfg.Plan.Port > 65535 {
+	if cfg.Schema < 1 || cfg.Schema > dualImageSchemaVersion || cfg.Plan.Backend != "native" || cfg.Plan.Name != name || !commitPattern.MatchString(cfg.Plan.Revision) || cfg.Plan.Port < 1024 || cfg.Plan.Port > 65535 {
 		return cfg, dir, fmt.Errorf("invalid native deployment metadata")
+	}
+	if cfg.Schema < dualImageSchemaVersion && cfg.Plan.Task == dualImageTask {
+		return cfg, dir, fmt.Errorf("dual image routes require native schema 10")
+	}
+	if err := validateDualImageExecution(cfg.Plan); err != nil {
+		return cfg, dir, err
 	}
 	if cfg.Schema < 9 && (cfg.Plan.Vision != nil && cfg.Plan.Vision.Images != nil || cfg.Plan.GGUF != nil && cfg.Plan.GGUF.Vision != nil && cfg.Plan.GGUF.Vision.Images != nil) {
 		return cfg, dir, fmt.Errorf("multi-image ingestion requires native schema 9")
@@ -254,6 +261,9 @@ func probeTorch(ctx context.Context, python string, p Plan) (TorchInfo, error) {
 	return info, nil
 }
 func DeployNative(ctx context.Context, p Plan, wait time.Duration) error {
+	if err := validateDualImageExecution(p); err != nil {
+		return err
+	}
 	if p.GGUF != nil {
 		return deployGGUF(ctx, p, wait)
 	}
@@ -299,6 +309,9 @@ func DeployNative(ctx context.Context, p Plan, wait time.Duration) error {
 	}
 	defer unlock()
 	cfg := NativeConfig{Schema: nativeSchemaVersion, Plan: p}
+	if p.Task == dualImageTask {
+		cfg.Schema = dualImageSchemaVersion
+	}
 	if err = writeJSONFile(filepath.Join(dir, "config.json"), cfg); err != nil {
 		return err
 	}
@@ -314,7 +327,7 @@ func DeployNative(ctx context.Context, p Plan, wait time.Duration) error {
 	if err = writeJSONFile(filepath.Join(dir, "config.json"), cfg); err != nil {
 		return err
 	}
-	for _, name := range []string{"api_auth.py", "native_entry.py", "server.py", "text_server.py", "model_code.py", "video_server.py", "gemma_vision.py", "qwen_vision.py", "vision_input.py", "pytorch_vision_profiles.json", "native_text.py", "native_text_profiles.json"} {
+	for _, name := range []string{"api_auth.py", "native_entry.py", "server.py", "dual_image_profiles.json", "text_server.py", "model_code.py", "video_server.py", "gemma_vision.py", "qwen_vision.py", "vision_input.py", "pytorch_vision_profiles.json", "native_text.py", "native_text_profiles.json"} {
 		b, e := assets.ReadFile("assets/" + name)
 		if e != nil {
 			return e
@@ -369,6 +382,9 @@ func runNativeInstall(ctx context.Context, python string, args ...string) error 
 	return cmd.Run()
 }
 func startNative(ctx context.Context, cfg NativeConfig, dir string, wait time.Duration) error {
+	if err := validateDualImageExecution(cfg.Plan); err != nil {
+		return err
+	}
 	if err := validateNativeTextPlan(cfg.Plan); err != nil {
 		return err
 	}
@@ -418,6 +434,9 @@ func startNative(ctx context.Context, cfg NativeConfig, dir string, wait time.Du
 	cmd.Stdout = log
 	cmd.Stderr = log
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err = ctx.Err(); err != nil {
+		return err
+	}
 	if err = cmd.Start(); err != nil {
 		return err
 	}
@@ -535,17 +554,18 @@ func waitNative(ctx context.Context, cfg NativeConfig, dir string, run NativeRun
 		}
 		if resp, err := client.Do(req); err == nil {
 			var health struct {
-				Ready    bool   `json:"ready"`
-				Model    string `json:"model"`
-				Revision string `json:"revision"`
-				RunID    string `json:"run_id"`
+				Ready      bool     `json:"ready"`
+				Model      string   `json:"model"`
+				Revision   string   `json:"revision"`
+				RunID      string   `json:"run_id"`
+				ImageTasks []string `json:"image_tasks"`
 			}
 			decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 65536)).Decode(&health)
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 				return fmt.Errorf("native readiness authentication rejected; worker retained; check key and restart after rotation")
 			}
-			if resp.StatusCode == 200 && decodeErr == nil && health.Ready && health.Model == cfg.Plan.Model && health.Revision == cfg.Plan.Revision && health.RunID == run.RunID {
+			if resp.StatusCode == 200 && decodeErr == nil && health.Ready && health.Model == cfg.Plan.Model && health.Revision == cfg.Plan.Revision && health.RunID == run.RunID && imageHealthMatches(cfg.Plan.Task, health.ImageTasks) {
 				return nil
 			}
 		}

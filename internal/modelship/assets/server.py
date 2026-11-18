@@ -10,6 +10,7 @@ import secrets
 import threading
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import torch
 from diffusers import AutoPipelineForImage2Image, AutoPipelineForText2Image
@@ -24,8 +25,50 @@ MODEL = os.environ.get("MODEL_ID", "")
 REVISION = os.environ.get("MODEL_REVISION", "")
 TASK = os.environ.get("MODEL_TASK", "text-to-image")
 PIPELINE = os.environ.get("MODEL_PIPELINE", "")
+GENERATE = "text-to-image"
+EDIT = "image-to-image"
+DUAL = "image-generate-and-edit"
 PIPE = None
+EDIT_PIPE = None
+UNHEALTHY = False
 BUSY = threading.Lock()
+
+
+def check_dual_profile():
+    import diffusers
+
+    profiles = json.loads(Path(__file__).with_name("dual_image_profiles.json").read_text(encoding="utf-8"))
+    for profile in profiles:
+        if (MODEL, REVISION, PIPELINE, os.environ.get("MODEL_RECIPE")) != (
+            profile["model"], profile["revision"], profile["pipeline"], profile["recipe"]
+        ):
+            continue
+        if (diffusers.__version__ != profile["diffusers"]
+                or os.environ.get("MODEL_NATIVE_LOADER") != profile["loader"]
+                or os.environ.get("MODEL_DTYPE") != profile["dtype"]
+                or json.loads(os.environ.get("MODEL_COMPONENT_DTYPES", "{}")) != profile["component_dtypes"]):
+            raise RuntimeError("dual-image runtime does not match the reviewed profile")
+        if profile["research"] and os.environ.get("MODEL_RESEARCH") != "true":
+            raise RuntimeError("dual-image Qwen requires --research acknowledgment of non-commercial use")
+        return
+    raise RuntimeError("dual-image model does not match a reviewed profile")
+
+
+def make_edit_pipeline(pipe):
+    if PIPELINE == "QwenImage21Pipeline":
+        return pipe
+    from diffusers import EulerDiscreteScheduler, StableDiffusionXLImg2ImgPipeline, StableDiffusionXLPipeline
+
+    if type(pipe) is not StableDiffusionXLPipeline or type(pipe.scheduler) is not EulerDiscreteScheduler:
+        raise RuntimeError("unexpected SDXL generation pipeline or scheduler")
+    scheduler = EulerDiscreteScheduler.from_config(pipe.scheduler.config)
+    edit = AutoPipelineForImage2Image.from_pipe(pipe, scheduler=scheduler)
+    if (type(edit) is not StableDiffusionXLImg2ImgPipeline
+            or edit.scheduler is not scheduler or scheduler is pipe.scheduler
+            or any(getattr(edit, name, None) is not getattr(pipe, name)
+                   for name in ("vae", "unet", "text_encoder", "text_encoder_2", "tokenizer", "tokenizer_2"))):
+        raise RuntimeError("unexpected SDXL edit pipeline or component placement")
+    return edit
 
 
 class Generation(BaseModel):
@@ -76,6 +119,8 @@ def decode_image(encoded, width, height, mode="RGB"):
 def load_pipeline():
     if not MODEL or not re.fullmatch(r"[a-f0-9]{40}", REVISION):
         raise RuntimeError("MODEL_ID and immutable MODEL_REVISION are required")
+    if TASK == DUAL:
+        check_dual_profile()
     modern = PIPELINE in ("QwenImage21Pipeline", "MOSSImagePipeline")
     dtype_name = os.environ.get("MODEL_DTYPE", "bfloat16" if modern or PIPELINE == "FluxPipeline" else "float16")
     if dtype_name not in ("float16", "bfloat16"):
@@ -119,18 +164,26 @@ def load_pipeline():
 
 @asynccontextmanager
 async def lifespan(app):
-    global PIPE
-    PIPE = load_pipeline()
+    global PIPE, EDIT_PIPE, UNHEALTHY
+    UNHEALTHY = False
+    pipe = load_pipeline()
     if PIPELINE not in ("QwenImage21Pipeline", "MOSSImagePipeline"):
-        PIPE = PIPE.to("cuda")
+        pipe = pipe.to("cuda")
     for name in ("enable_slicing", "enable_tiling"):
-        method = getattr(PIPE.vae, name, None)
+        method = getattr(pipe.vae, name, None)
         if callable(method):
             method()
-    PIPE.set_progress_bar_config(disable=True)
-    yield
-    PIPE = None
-    torch.cuda.empty_cache()
+    edit = make_edit_pipeline(pipe) if TASK == DUAL else None
+    pipe.set_progress_bar_config(disable=True)
+    if edit is not None and edit is not pipe:
+        edit.set_progress_bar_config(disable=True)
+    PIPE, EDIT_PIPE = pipe, edit
+    try:
+        yield
+    finally:
+        if not UNHEALTHY:
+            PIPE = EDIT_PIPE = pipe = edit = None
+            torch.cuda.empty_cache()
 
 
 app = FastAPI(title="modelship images", lifespan=lifespan)
@@ -138,24 +191,36 @@ app = FastAPI(title="modelship images", lifespan=lifespan)
 
 @app.get("/health")
 def health():
-    return {"ready": PIPE is not None, "model": MODEL, "revision": REVISION,
-            "task": TASK, "pipeline": PIPELINE, "recipe": os.environ.get("MODEL_RECIPE", ""),
-            "run_id": os.environ.get("MODEL_RUN_ID", "")}
+    ready = PIPE is not None and not UNHEALTHY and (TASK != DUAL or EDIT_PIPE is not None)
+    return {"ready": ready, "model": MODEL, "revision": REVISION,
+            "task": GENERATE if TASK == DUAL else TASK, "pipeline": PIPELINE,
+            "recipe": os.environ.get("MODEL_RECIPE", ""), "run_id": os.environ.get("MODEL_RUN_ID", ""),
+            **({"image_tasks": [GENERATE, EDIT]} if TASK == DUAL and ready else {})}
 
 
-def generate(req):
+def generate(req, task):
+    global UNHEALTHY
     if not BUSY.acquire(blocking=False):
         raise HTTPException(503, "GPU busy; retry after the current request finishes")
     try:
+        if UNHEALTHY or PIPE is None or (TASK == DUAL and EDIT_PIPE is None):
+            raise HTTPException(503, "image worker unavailable; check readiness and service logs")
         seed = req.seed if req.seed is not None else secrets.randbelow(2**63)
         args = dict(
             prompt=req.prompt, num_inference_steps=req.steps,
             guidance_scale=req.guidance_scale if req.guidance_scale is not None else (
                 1.0 if PIPELINE == "QwenImage21Pipeline" else 3.0 if PIPELINE == "MOSSImagePipeline" else 7.0),
-            generator=torch.Generator(device="cpu" if PIPELINE == "MOSSImagePipeline" else "cuda").manual_seed(seed),
             width=req.width, height=req.height,
         )
         if PIPELINE == "QwenImage21Pipeline":
+            # The pinned edit processor expands these strings into visual
+            # features. User-supplied markers can invalidate that alignment
+            # before denoising; reject them before entering the pipeline.
+            if TASK == DUAL and any(marker in text
+                    for text in (req.prompt, req.negative_prompt or "")
+                    for marker in ("<|image_pad|>", "<|video_pad|>", "<|vision_start|>",
+                                   "<|vision_end|>", "<|placeholder|>")):
+                raise HTTPException(422, "Qwen Image prompts cannot include reserved vision markers")
             args["true_cfg_scale"] = args.pop("guidance_scale")
             # Condition images otherwise default to 1024-pixel preprocessing even
             # for a 256/512 request, escaping this service's image memory budget.
@@ -175,7 +240,7 @@ def generate(req):
                 raise HTTPException(422, "negative_prompt is not supported for FLUX in this runtime")
         elif req.negative_prompt is not None:
             args["negative_prompt"] = req.negative_prompt
-        if TASK == "image-to-image":
+        if task == EDIT:
             if not req.image_b64:
                 raise HTTPException(422, "image_b64 is required for image-to-image")
             args["image"] = decode_image(req.image_b64, req.width, req.height, "RGBA" if PIPELINE == "QwenImage21Pipeline" else "RGB")
@@ -187,8 +252,29 @@ def generate(req):
                 args.pop("height")
         elif req.image_b64 is not None:
             raise HTTPException(422, "this deployment serves text-to-image, not image-to-image")
-        with torch.inference_mode():
-            image = PIPE(**args).images[0]
+        pipe = EDIT_PIPE if TASK == DUAL and task == EDIT else PIPE
+        try:
+            args["generator"] = torch.Generator(device="cpu" if PIPELINE == "MOSSImagePipeline" else "cuda").manual_seed(seed)
+            with torch.inference_mode():
+                image = pipe(**args).images[0]
+        except Exception as exc:
+            if TASK != DUAL:
+                raise
+            # SDXL can upcast its shared VAE in place before a failure. A CUDA
+            # drain alone cannot certify that the pipeline state was restored.
+            UNHEALTHY = True
+            if isinstance(exc, torch.OutOfMemoryError):
+                raise HTTPException(503, "GPU out of memory; restart worker before reducing the workload") from None
+            raise HTTPException(500, "image pipeline failed; restart worker before submitting again") from None
+        finally:
+            if TASK == DUAL:
+                try:
+                    torch.cuda.synchronize()
+                except Exception:
+                    # A failed drain cannot establish that another request is safe.
+                    # Keep resident pipelines and fail readiness until process restart.
+                    UNHEALTHY = True
+                    raise HTTPException(503, "image worker CUDA drain failed; restart required") from None
         output = io.BytesIO()
         image.save(output, format="PNG")
         return {
@@ -222,13 +308,13 @@ REQUEST_SCHEMA = {"requestBody": {"required": True, "content": {
 
 @app.post("/v1/images/generations", openapi_extra=REQUEST_SCHEMA)
 async def generations(request: Request):
-    if TASK != "text-to-image":
+    if TASK not in (GENERATE, DUAL):
         raise HTTPException(409, "this deployment serves /v1/images/edits")
-    return await run_in_threadpool(generate, await parse_request(request))
+    return await run_in_threadpool(generate, await parse_request(request), GENERATE)
 
 
 @app.post("/v1/images/edits", openapi_extra=REQUEST_SCHEMA)
 async def edits(request: Request):
-    if TASK != "image-to-image":
+    if TASK not in (EDIT, DUAL):
         raise HTTPException(409, "this deployment serves /v1/images/generations")
-    return await run_in_threadpool(generate, await parse_request(request))
+    return await run_in_threadpool(generate, await parse_request(request), EDIT)

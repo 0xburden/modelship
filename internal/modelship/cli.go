@@ -36,7 +36,7 @@ Commands:
 MODEL is org/repo or https://huggingface.co/org/repo.
 
 Plan/deploy options:
-  --task auto|text-generation|text-to-image|image-to-image|text-to-video
+  --task auto|text-generation|text-to-image|image-to-image|image-generate-and-edit|text-to-video
   --revision main   --gpu 0   --context 4096   --port 8000
   --backend docker|native   --python python3 (Python-based native recipes; GGUF uses llama.cpp)
   --listen 127.0.0.1|0.0.0.0 --api-key-file PATH (native only; public binds require auth)
@@ -215,7 +215,7 @@ func planCommand(ctx context.Context, action string, args []string) error {
 	if o.GPUMode != "auto" && o.GPUMode != "nvidia" && o.GPUMode != "cdi" {
 		return fmt.Errorf("--gpu-mode must be auto, nvidia, or cdi")
 	}
-	if o.Task != "auto" && o.Task != "text-generation" && o.Task != "text-to-image" && o.Task != "image-to-image" && o.Task != "text-to-video" {
+	if o.Task != "auto" && o.Task != "text-generation" && o.Task != "text-to-image" && o.Task != "image-to-image" && o.Task != dualImageTask && o.Task != "text-to-video" {
 		return fmt.Errorf("invalid --task")
 	}
 	if o.Backend != "docker" && o.Backend != "native" {

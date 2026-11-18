@@ -259,7 +259,9 @@ func ConfigureNative(ctx context.Context, name string, listen, key *string) erro
 			return e
 		}
 	}
-	cfg.Schema = nativeSchemaVersion
+	if cfg.Schema < 4 {
+		cfg.Schema = 4 // Only access changed; retain the existing execution schema.
+	}
 	if err = writeJSONFile(filepath.Join(dir, "config.json"), cfg); err != nil {
 		return err
 	}
@@ -286,15 +288,16 @@ func nativeHealth(ctx context.Context, cfg NativeConfig, run NativeRun) (bool, s
 		return false, fmt.Sprintf("readiness HTTP %d", resp.StatusCode)
 	}
 	var health struct {
-		Ready    bool   `json:"ready"`
-		Model    string `json:"model"`
-		Revision string `json:"revision"`
-		RunID    string `json:"run_id"`
+		Ready      bool     `json:"ready"`
+		Model      string   `json:"model"`
+		Revision   string   `json:"revision"`
+		RunID      string   `json:"run_id"`
+		ImageTasks []string `json:"image_tasks"`
 	}
 	if err = json.NewDecoder(io.LimitReader(resp.Body, 65536)).Decode(&health); err != nil {
 		return false, "invalid readiness response"
 	}
-	if !health.Ready || health.Model != cfg.Plan.Model || health.Revision != cfg.Plan.Revision || health.RunID != run.RunID {
+	if !health.Ready || health.Model != cfg.Plan.Model || health.Revision != cfg.Plan.Revision || health.RunID != run.RunID || !imageHealthMatches(cfg.Plan.Task, health.ImageTasks) {
 		return false, "worker identity/readiness mismatch"
 	}
 	return true, ""

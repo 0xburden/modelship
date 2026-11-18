@@ -230,10 +230,13 @@ func BuildPlan(m Model, h Host, o Options) (Plan, error) {
 			if p.Task != "text-to-video" {
 				return p, fmt.Errorf("this model requires --task text-to-video")
 			}
-		} else if p.Task != "text-to-image" && p.Task != "image-to-image" {
+		} else if p.Task != "text-to-image" && p.Task != "image-to-image" && p.Task != dualImageTask {
 			return p, fmt.Errorf("this model requires --task text-to-image or image-to-image")
 		}
-		if !contains(recipe.Tasks, p.Task) {
+		if !contains(imageTaskChoices(recipe, m, backend), p.Task) {
+			if p.Task == dualImageTask {
+				return p, fmt.Errorf("%s requires an exact reviewed native Diffusers image recipe; see IMAGE_GENERATE_EDIT.md", dualImageTask)
+			}
 			return p, fmt.Errorf("recipe %s does not support task %s", recipe.ID, p.Task)
 		}
 		p.Runtime = "diffusers"
@@ -359,6 +362,13 @@ func BuildPlan(m Model, h Host, o Options) (Plan, error) {
 		if profile != nil {
 			p.Warnings = append(p.Warnings, "Native Gemma chat controls: real opt-in SSE and per-request enable_thinking; both off by default. Output remains capped at 1024 tokens including reasoning. Completion behavior is unchanged. Existing saved deployments are not upgraded; new schema-8 execution profile is required. Basic Gemma streaming/thinking is user-reported working; peak memory and broader coverage remain unmeasured.")
 		}
+	}
+	if p.Task == dualImageTask {
+		if err := validateDualImagePlan(p); err != nil {
+			return p, err
+		}
+		p.EstimatedVRAMMiB += dualImageAllowanceMiB
+		p.Warnings = append(p.Warnings, "Generate + edit: one resident checkpoint and one active GPU request across both routes. Adds a conservative 2048 MiB runtime heuristic (not a measured peak). Dual-mode GPU validation is pending; existing deployments are not upgraded.")
 	}
 	if o.Vision {
 		profile, e := nativeVisionFor(m)

@@ -247,7 +247,7 @@ func TestNativeSchema4ReadsLegacySchemasWithoutIgnoringFutureConstraints(t *test
 			t.Fatalf("legacy schema %d rejected: %v", schema, err)
 		}
 	}
-	if err = writeJSONFile(filepath.Join(dir, "config.json"), NativeConfig{Schema: nativeSchemaVersion + 1, Plan: p}); err != nil {
+	if err = writeJSONFile(filepath.Join(dir, "config.json"), NativeConfig{Schema: dualImageSchemaVersion + 1, Plan: p}); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err = nativeConfig(p.Name); err == nil {
