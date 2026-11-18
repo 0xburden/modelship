@@ -1,4 +1,6 @@
-> **Alpha.14 candidate:** opt-in [generation + editing on one native endpoint](IMAGE_GENERATE_EDIT.md) for exact Qwen Image 2.1 and SDXL pins. Existing workers and single-task defaults are unchanged. Combined-mode GPU validation is pending.
+> **Alpha.15 candidate:** new native installations of the reviewed Qwen Image 2.1 pin use a [seam-reducing tiled VAE decoder](IMAGE_GENERATE_EDIT.md#qwen-image-21-output-seams) for both generation and edits. Same-latent decoder A/B measurements on an A6000 show smaller color discontinuities without a material change in decoder memory. This is not a full pipeline benchmark; existing workers are unchanged.
+
+> **v0.3.0-alpha.14:** opt-in [generation + editing on one native endpoint](IMAGE_GENERATE_EDIT.md) for exact Qwen Image 2.1 and SDXL pins. Single-task defaults are unchanged.
 
 > **v0.3.0-alpha.13:** successful guided deployments automatically open live logs with Ctrl-C-to-exit guidance; exiting the viewer never sends a stop request. Readiness wait `0` opens logs immediately after submission; flag-based deploy remains non-interactive. Radio menus also omit redundant number/letter prefixes and legacy input hints; plain menus keep them. See [WIZARD.md](WIZARD.md).
 

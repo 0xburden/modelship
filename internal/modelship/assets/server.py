@@ -162,6 +162,17 @@ def load_pipeline():
     )
 
 
+def configure_output_decode(vae):
+    if (MODEL, REVISION, PIPELINE, os.environ.get("MODEL_RECIPE"), os.environ.get("MODEL_NATIVE_LOADER")) == (
+        "Qwen/Qwen-Image-2.1", "d26bb61231c349cf6b7896fa83353113880e1ba3",
+        "QwenImage21Pipeline", "qwen-image21", "qwen-image21",
+    ):
+        from qwen_image_decode import install_tiled_decode
+
+        install_tiled_decode(vae)
+        print("Qwen Image 2.1: using halo-blended tiled VAE output decode", flush=True)
+
+
 @asynccontextmanager
 async def lifespan(app):
     global PIPE, EDIT_PIPE, UNHEALTHY
@@ -173,6 +184,7 @@ async def lifespan(app):
         method = getattr(pipe.vae, name, None)
         if callable(method):
             method()
+    configure_output_decode(pipe.vae)
     edit = make_edit_pipeline(pipe) if TASK == DUAL else None
     pipe.set_progress_bar_config(disable=True)
     if edit is not None and edit is not pipe:

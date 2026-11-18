@@ -130,6 +130,9 @@ class DualImageAPITests(unittest.TestCase):
             __version__=version, QwenImage21Pipeline=FakePipeline,
             EulerDiscreteScheduler=Scheduler, StableDiffusionXLPipeline=XL, StableDiffusionXLImg2ImgPipeline=XLImg2Img,
         )}))
+        self.enterContext(patch.dict(sys.modules, {"qwen_image_decode": types.SimpleNamespace(
+            install_tiled_decode=lambda vae: CALLS.append(("install-tiled-decode", vae)),
+        )}))
         self.enterContext(patch.object(server.torch.cuda, "synchronize", lambda: CALLS.append(("drain",)), create=True))
 
     def test_shared_routes_and_distinct_request_arguments(self):
@@ -142,6 +145,8 @@ class DualImageAPITests(unittest.TestCase):
                     self.assertEqual(health["task"], server.GENERATE)
                     self.assertEqual(health["image_tasks"], [server.GENERATE, server.EDIT])
                     self.assertEqual(server.PIPE is server.EDIT_PIPE, qwen)
+                    self.assertEqual([c[1] for c in CALLS if c[0] == "install-tiled-decode"],
+                                     [server.PIPE.vae] if qwen else [])
                     before = {"prompt": "fixture", "seed": 42, "width": 512, "height": 768}
                     for route, body in [(self.GEN, before), (self.EDIT, {**before, "image_b64": encoded_input()}), (self.GEN, before)]:
                         response = client.post(route, json=body)
@@ -171,6 +176,18 @@ class DualImageAPITests(unittest.TestCase):
                     self.assertIs(pipe.unet, wrapper.unet)
                     self.assertIsNot(pipe.scheduler, wrapper.scheduler)
                 self.assertEqual(sum(c == ("drain",) for c in CALLS), 3)
+
+    def test_qwen_decode_profile_only_on_the_pinned_native_worker(self):
+        self.configure(qwen=True)
+        for task in (server.GENERATE, server.EDIT, server.DUAL):
+            with patch.object(server, "TASK", task), TestClient(server.app):
+                self.assertEqual([c[1] for c in CALLS if c[0] == "install-tiled-decode"], [server.PIPE.vae])
+            CALLS.clear()
+        with patch.object(server, "TASK", server.GENERATE):
+            with patch.object(server, "REVISION", "f" * 40), TestClient(server.app):
+                self.assertFalse(any(c[0] == "install-tiled-decode" for c in CALLS))
+            with patch.dict(os.environ, {"MODEL_NATIVE_LOADER": "auto-pipeline"}), TestClient(server.app):
+                self.assertFalse(any(c[0] == "install-tiled-decode" for c in CALLS))
 
     def test_cross_route_busy_through_drain_in_both_directions(self):
         self.configure(qwen=True)

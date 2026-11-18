@@ -327,7 +327,7 @@ func DeployNative(ctx context.Context, p Plan, wait time.Duration) error {
 	if err = writeJSONFile(filepath.Join(dir, "config.json"), cfg); err != nil {
 		return err
 	}
-	for _, name := range []string{"api_auth.py", "native_entry.py", "server.py", "dual_image_profiles.json", "text_server.py", "model_code.py", "video_server.py", "gemma_vision.py", "qwen_vision.py", "vision_input.py", "pytorch_vision_profiles.json", "native_text.py", "native_text_profiles.json"} {
+	for _, name := range []string{"api_auth.py", "native_entry.py", "server.py", "qwen_image_decode.py", "dual_image_profiles.json", "text_server.py", "model_code.py", "video_server.py", "gemma_vision.py", "qwen_vision.py", "vision_input.py", "pytorch_vision_profiles.json", "native_text.py", "native_text_profiles.json"} {
 		b, e := assets.ReadFile("assets/" + name)
 		if e != nil {
 			return e

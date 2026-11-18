@@ -51,3 +51,19 @@ or stop a working service just to try dual mode; use a distinct name and port
 and check available VRAM first. Dual deployments use native schema 10. Existing
 single-task deployments retain their execution behavior. Combined-mode tests
 use CPU fixtures; GPU behavior and peak VRAM are not yet verified for this mode.
+
+## Qwen Image 2.1 output seams
+
+Starting with alpha.15, new native installations of the exact Qwen pin above
+use a halo-blended tiled output decoder in generation-only, edit-only and
+combined deployments. It keeps the FP32 VAE, 256px decode tiles and 192px
+stride. It excludes the unreliable inner tile borders from the blend and
+uses complementary weights across the center of the overlap. It does not
+change conditioning encode, model weights, output limits, or placement checks.
+SDXL, other Qwen revisions and Docker are not affected.
+
+This reduces a measured source of color streaks, not every possible image
+artifact. See [the decoder-only GPU A/B](VALIDATION.md#alpha15-qwen-image-21-vae-output-seams).
+Updating the CLI, restarting an existing worker or changing access settings
+won't update that worker's saved runtime. Test a new deployment when you can
+schedule it; it still needs to pass the usual free-memory and disk checks.
