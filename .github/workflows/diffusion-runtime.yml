@@ -23,7 +23,7 @@ jobs:
           docker image prune --all --force
           df -h /
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
-      - name: Test placement guard, compile CUDA, and check ELF ABI (no GPU)
+      - name: Test placement and private protocol, compile CUDA, and check ELF ABI (no GPU)
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: .
@@ -31,11 +31,11 @@ jobs:
           target: candidate
           outputs: type=local,dest=diffusion-out
           provenance: false
-      - name: Verify probe checksum and record ABI evidence
+      - name: Verify candidate checksums and record ABI evidence
         run: |
           cd diffusion-out
           sha256sum -c SHA256SUMS
-          cat SHA256SUMS evidence/dynamic.txt
+          cat SHA256SUMS evidence/*.dynamic.txt
           tail -n 1 evidence/elf-abi.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

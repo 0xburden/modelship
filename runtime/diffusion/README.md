@@ -1,12 +1,12 @@
 # GGUF diffusion runtime investigation
 
-**Candidate only.** This directory is not a supported deployment profile and does not change the installer, `modelship` CLI, llama.cpp workers, or native Diffusers workers. The probe cannot load a model, open a port, or generate an image. The stock upstream HTTP server is not part of this build.
+**Candidate only.** This directory is not a supported deployment profile and does not change the installer, `modelship` CLI, llama.cpp workers, or native Diffusers workers. The probe cannot load a model, open a port, or generate an image. A separate private stdio worker candidate can load the fixed generation profile. It does not open a port and is not wired into the CLI. The stock upstream HTTP server is not part of this build.
 
 ## Runtime probe
 
 - [stable-diffusion.cpp `master-1106-532d2c1`](https://github.com/leejet/stable-diffusion.cpp/releases/tag/master-1106-532d2c1), source `532d2c15c430a785a712b2d94281f04e733008a4`. Its ggml gitlink is the leejet fork at `eeda9ec48fc84a3df0bb9dcc19ae9053075a2539`. Both sources are MIT; that does not grant rights to model weights or CUDA libraries.
 - No standalone CUDA Linux asset is published for that release. The upstream CUDA container is Ubuntu 24.04/CUDA 12.6.3. This probe instead checks a native Linux AMD64 build on Ubuntu 22.04/CUDA 12.8.1, SM80 plus compute80 PTX. The source archives, CMake archive and builder image are independently pinned; configure and compile are offline. CUTLASS, the HTTP server, media output extensions, RPC and dynamic backend plug-ins are excluded.
-- The candidate export contains the probe, its checksum, and an ELF symbol/dependency report. It does **not** contain NVIDIA userspace libraries, host drivers, or a redistributable runtime. The build-time ABI check permits only the expected missing host `libcuda.so.1` on a GPU-less runner. It does not run a driver stub.
+- The candidate export contains the probe and private worker, checksums, and ELF symbol/dependency reports. It does **not** contain NVIDIA userspace libraries, host drivers, or a redistributable runtime. The build-time ABI check permits only the expected missing host `libcuda.so.1` on a GPU-less runner. It does not run a driver stub.
 - `modelship-sd-probe --version` reports the linked source commit. On an authorized machine with reviewed CUDA userspace, `--cuda-check` is intended to verify exactly one visible CUDA device with a non-host 4 KiB allocation; it refuses the ggml unified-memory override. This would not establish inference compatibility, full graph placement, or peak memory.
 
 ## First model candidate: Qwen Image 2.1 (non-Turbo)
@@ -24,10 +24,28 @@ These are metadata pins, **not installed or locally whole-file verified**. Only 
 
 Total downloads: **9,900,789,304 bytes** for generation, **11,059,819,128 bytes** with editing. These totals are neither runtime residency estimates nor minimum VRAM requirements. In particular, the diffusion GGUF v3 header is a tensor directory with 265 tensors and **zero KV entries**. The current text GGUF parser's chat architecture/metadata assumptions must not be relaxed to admit it. A diffusion-specific inspection and accounting path is needed, including any runtime dtype expansion and mandatory CUDA workspace.
 
+## Private generation worker (protocol v1)
+
+The worker is a child process, not a service. It uses the pinned C API and patched CUDA-only graph and weight placement. It supports a single non-Turbo image at **512×512**, 40 Euler steps, upstream model-selected schedule, text CFG 6, and an explicit unsigned 32-bit seed. No editing, adapters, sampler overrides, fetches, or request-selected model paths. The worker does not inherit an HTTP interface from upstream.
+
+The future parent must verify the full runtime and three model component hashes, expose only the intended GPU, and pass a curated environment and a private immutable component directory. The worker checks the reviewed local names and byte counts before opening the models; that is not a substitute for hash verification. It requires one visible CUDA device, requests eager loading with no mmap or auto-fit, and checks the loaded model family. The parent needs a hard admission gate, process deadlines and exclusive ownership until the child drains or has been reaped. Do not run it against shared or unverified files.
+
+The private protocol uses a four-byte big-endian body length followed by the body:
+
+| Direction | Body |
+| --- | --- |
+| Parent → worker | Four-byte big-endian seed, then 1–1,024 UTF-8 prompt bytes (no inline image, LoRA or reserved role/control tags). |
+| Worker → parent | `L`, byte `1`: context loaded, **not** public or warm-up readiness. |
+| Worker → parent | `I`, byte `3` or `4`, then contiguous RGB or RGBA bytes for exactly 512×512 pixels. Only sent after successful CUDA synchronization. |
+| Worker → parent | `V`: invalid prompt, no inference. |
+| Worker → parent | `F` or premature EOF: fatal; close pipes, reap, and do not retry the request. |
+
+Keep one request outstanding. An invalid frame length or truncated frame closes the worker. The weight-free protocol test uses a simulated engine; it verifies acceptance, rejection, bounded response framing, and that a failed request cannot lead to a second inference. It does not establish CUDA load or generation success.
+
 ## Gates before adding `deploy` support
 
 1. **Enforce placement, not just device selection.** The [upstream graph scheduler](https://github.com/leejet/stable-diffusion.cpp/blob/532d2c15c430a785a712b2d94281f04e733008a4/src/core/compute_workspace.cpp#L28-L48) requires CPU registration for allocation and scheduling. `cuda-placement.cmake` patches only the exact pinned ggml files in the disposable build tree and verifies the resulting hashes. It preflights all final scheduler splits before dispatch, guards direct and planned dispatch, and blocks nonempty graphs at the CPU kernel entry point (including nested extension calls). The weight-free test links the real patched CPU backend: allocation still works, rejected compute leaves the output untouched, and a fake CUDA0 followed by an unsupported CPU split is rejected before even the first dispatch. It does not run CUDA. Upstream [`params_buffer_type_for`](https://github.com/leejet/stable-diffusion.cpp/blob/532d2c15c430a785a712b2d94281f04e733008a4/src/model_manager.cpp#L1135-L1169) can choose a host buffer even with CUDA parameters configured. `cuda-residency.cmake` checks the exact pinned model manager: reject split, disk and mismatched compute/parameter backends; reject host or nondefault buffers before allocation; verify attached buffers before reading weight payloads and when reusing loaded parameters. Persistent host mappings and disk demotion are blocked. The weight-free test covers the buffer predicate with real CPU buffers and synthetic device metadata. The private worker must request eager loading, forbid unified memory and treat unsupported graphs or storage as readiness failures. This is enforcement code, **not** a measurement of where the Qwen weights actually load or whether an inference graph runs. Ordinary host tokenization, image decoding and response encoding are not model offload. Don't reuse Diffusers memory or quality claims.
-2. **Keep the C API behind a private worker boundary.** Compile a narrow worker rather than exposing upstream model loaders or simply forwarding HTTP. Only verified local files and fixed options, no arbitrary graphs/model parameters, prompt-embedded settings, or runtime fetches. Use existing Modelship auth and bounded image API, one in-flight request, readiness after warm-up, and hold ownership until the GPU drains. A disconnect is not proof of cancellation. Poison on uncertain completion; no automatic replay or downsizing.
+2. **Keep the C API behind a private worker boundary.** Integrate the private worker without exposing upstream model loaders or simply forwarding HTTP. Supervise it under existing Modelship auth and bounded image API, with one in-flight request, readiness after warm-up, and ownership until the GPU drains. A disconnect is not proof of cancellation. Poison on uncertain completion; no automatic replay or downsizing.
 3. **Prove the first narrow GPU profile.** With separate authorization and dedicated capacity, measure full placement and peak memory for one 512×512 generation at a time, then validate one bounded edit independently before advertising it. No claim of 1024² fit, output equivalence to Diffusers, or LoRA support. Test error, restart, disconnect and busy paths before making a candidate public.
 
 FLUX.1-schnell is a separate generation-only option if permissive licensing is the priority. It would require its own verified diffusion/encoder/VAE bundle and tests; it is not an edit fallback or a substitute for Qwen.
