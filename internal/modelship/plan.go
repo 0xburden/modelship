@@ -14,7 +14,8 @@ type Options struct {
 	Vision     bool
 	MMProjFile string
 
-	GGUFFile string
+	GGUFFile  string
+	Diffusion bool
 
 	Listen         string
 	APIKeyFile     string
@@ -36,6 +37,7 @@ type Plan struct {
 	Vision       *NativeVisionProfile `json:"vision,omitempty"`
 	TextFeatures *NativeTextProfile   `json:"text_features,omitempty"`
 	GGUF         *GGUFSpec            `json:"gguf,omitempty"`
+	Diffusion    string               `json:"diffusion_profile,omitempty"`
 
 	Listen              string            `json:"listen,omitempty"`
 	APIKeyFile          string            `json:"api_key_file,omitempty"`
@@ -94,6 +96,9 @@ func BuildPlan(m Model, h Host, o Options) (Plan, error) {
 	o.Backend = backend
 	if err := accessOptions(&o); err != nil {
 		return Plan{}, err
+	}
+	if o.Diffusion {
+		return buildDiffusionPlan(m.Hub.ID, m.Hub.SHA, h, o)
 	}
 	if ggufOnly(m) || o.GGUFFile != "" || m.GGUF != nil {
 		return buildGGUFPlan(m, h, o)
