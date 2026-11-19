@@ -97,7 +97,8 @@ const diffusionFixtureKey = "synthetic_diffusion_test_bearer_0123456789"
 
 func diffusionFixtureGateway(t *testing.T, gen func(string, uint32) (*image.NRGBA, error), poison func()) *diffusionGateway {
 	t.Helper()
-	g, err := newDiffusionGateway("fixture", strings.Repeat("a", 40), strings.Repeat("b", 32), diffusionFixtureKey, gen, poison)
+	g, err := newDiffusionGatewayForTask(diffusionTask, "fixture", strings.Repeat("a", 40), strings.Repeat("b", 32), diffusionFixtureKey,
+		func(prompt string, seed uint32, _ []byte) (*image.NRGBA, error) { return gen(prompt, seed) }, poison)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,5 +216,77 @@ func TestDiffusionGatewayDisconnectBusyAndPoison(t *testing.T) {
 	g.warmed() // late readiness must not revive a failed process
 	if w := post(context.Background()); w.Code != 503 || calls.Load() != 1 || poisoned.Load() != 1 || g.ready() {
 		t.Fatalf("unavailable worker accepted work: %d calls=%d poison=%d", w.Code, calls.Load(), poisoned.Load())
+	}
+}
+
+func TestDiffusionEditGatewayAuthBusyDisconnect(t *testing.T) {
+	started, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var calls, poisoned atomic.Int32
+	g, err := newDiffusionGatewayForTask(diffusionEditTask, "fixture", strings.Repeat("a", 40), strings.Repeat("b", 32), diffusionFixtureKey,
+		func(prompt string, seed uint32, rgb []byte) (*image.NRGBA, error) {
+			if prompt != "make it blue" || seed != 0 || !bytes.Equal(rgb, make([]byte, diffusionEditRGBBytes)) {
+				t.Error("edit worker did not receive the exact request")
+			}
+			if calls.Add(1) == 1 {
+				close(started)
+				<-release
+			}
+			return nil, errDiffusionProtocol
+		}, func() { poisoned.Add(1) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	post := func(ctx context.Context, body string, keys ...string) *httptest.ResponseRecorder {
+		return diffusionFixtureHTTP(ctx, g, "POST", "/v1/images/edits", body, keys...)
+	}
+	if got := post(ctx, "bad"); got.Code != 401 {
+		t.Fatal("parsed edit before authentication")
+	}
+	if got := diffusionFixtureHTTP(ctx, g, "GET", "/v1/capabilities", "", diffusionFixtureKey); got.Code != 503 {
+		t.Fatal("advertised editing before warmup")
+	}
+	g.warmed()
+	if got := diffusionFixtureHTTP(ctx, g, "GET", "/v1/capabilities", "", diffusionFixtureKey); got.Code != 200 ||
+		!strings.Contains(got.Body.String(), `"image_edit"`) || strings.Contains(got.Body.String(), `"image_generation"`) {
+		t.Fatalf("incorrect edit capabilities: %d", got.Code)
+	}
+	if got := post(ctx, strings.Repeat("x", diffusionEditEncodedBytes+diffusionMaxBody+1), diffusionFixtureKey); got.Code != 413 {
+		t.Fatalf("oversize edit status %d", got.Code)
+	}
+	if got := post(ctx, `{"prompt":"make it blue","image_b64":"AA=="}`, diffusionFixtureKey); got.Code != 422 || calls.Load() != 0 {
+		t.Fatalf("invalid edit reached worker: %d", got.Code)
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewGray(image.Rect(0, 0, diffusionSide, diffusionSide))); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"prompt":"make it blue","seed":0,"image_b64":"` + base64.StdEncoding.EncodeToString(buf.Bytes()) + `"}`
+	go func() { defer close(done); post(ctx, body, diffusionFixtureKey) }()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("first edit never entered")
+	}
+	cancel()
+	if w := post(context.Background(), body, diffusionFixtureKey); w.Code != 503 || !strings.Contains(w.Body.String(), "GPU busy") {
+		t.Fatal("disconnect released active edit slot")
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("first edit did not complete")
+	}
+	if w := post(context.Background(), body, diffusionFixtureKey); w.Code != 503 || calls.Load() != 1 || poisoned.Load() != 1 || g.ready() {
+		t.Fatal("failed edit did not poison the worker")
 	}
 }

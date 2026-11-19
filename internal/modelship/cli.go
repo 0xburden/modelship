@@ -48,7 +48,7 @@ Plan/deploy options:
   --research         Acknowledge non-commercial research/evaluation use (Qwen Image)
   --trust-model-code Explicit approval of the pinned, hash-verified MOSS Python code
   --gguf-file FILE  Explicit reviewed GGUF text variant; no automatic conversion
-  --diffusion-runtime-dir DIR  Draft native GGUF image generation with pinned local runtime pair
+  --diffusion-runtime-dir DIR  Draft native GGUF image generation or edit with pinned local runtime pair
   --vision          Opt in to reviewed image understanding (native Gemma/Qwen or GGUF)
   --mmproj-file FILE  Explicit reviewed projector (required for GGUF vision only)
   --weights-repo ID  Explicit official WAN Diffusers conversion; never inferred
@@ -185,7 +185,7 @@ func planCommand(ctx context.Context, action string, args []string) error {
 	fs.BoolVar(&o.Vision, "vision", false, "enable reviewed native image understanding (GGUF additionally requires --mmproj-file)")
 	fs.StringVar(&o.MMProjFile, "mmproj-file", "", "explicit reviewed GGUF vision projector filename")
 	fs.StringVar(&o.GGUFFile, "gguf-file", "", "explicit approved standalone GGUF filename (native experimental only)")
-	diffusionRuntimeDir := fs.String("diffusion-runtime-dir", "", "experimental GGUF generation: private directory with the exact reviewed worker and probe")
+	diffusionRuntimeDir := fs.String("diffusion-runtime-dir", "", "experimental GGUF diffusion: private directory with the exact reviewed worker and probe")
 	fs.StringVar(&o.Listen, "listen", "", "native IPv4 listener (default 127.0.0.1); 0.0.0.0 requires --api-key-file")
 	fs.StringVar(&o.APIKeyFile, "api-key-file", "", "private bearer key file; never a literal key value")
 	fs.StringVar(&o.Python, "python", "python3", "native base Python with working CUDA PyTorch")
@@ -360,11 +360,13 @@ func writePlan(w io.Writer, p Plan) {
 	}
 	if p.Diffusion != "" {
 		fmt.Fprintf(w, "Diffusion:   %s; CUDA0 only, no CPU weight offload; experimental admission 40 GiB free plus idle GPU\n", p.Diffusion)
-		for _, file := range diffusionArtifacts() {
+		for _, file := range diffusionArtifacts(p.Task) {
 			fmt.Fprintf(w, "  %s @ %s / %s (%d bytes); SHA-256 %s\n", file.Repo, file.Revision, file.RemotePath, file.Size, file.SHA256)
 		}
-		for _, file := range []ArtifactPin{diffusionWorkerPin, diffusionProbePin} {
-			fmt.Fprintf(w, "  Local executable %s (%d bytes); SHA-256 %s\n", file.Name, file.Size, file.SHA256)
+		if pins, err := diffusionRuntimePins(p.Task); err == nil {
+			for _, file := range pins {
+				fmt.Fprintf(w, "  Local executable %s (%d bytes); SHA-256 %s\n", file.Name, file.Size, file.SHA256)
+			}
 		}
 	}
 	if p.TextFeatures != nil {

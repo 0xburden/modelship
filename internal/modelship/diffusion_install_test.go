@@ -41,7 +41,7 @@ func TestDiffusionPlanningIsolation(t *testing.T) {
 	o := Options{Backend: "native", Research: true, Experimental: true, APIKeyFile: p.APIKeyFile, Name: p.Name, Port: p.Port}
 	for _, change := range []func(*Options){
 		func(o *Options) { o.AllowRisk = true }, func(o *Options) { o.Backend = "docker" },
-		func(o *Options) { o.Task = "image-to-image" }, func(o *Options) { o.Vision = true },
+		func(o *Options) { o.Task = dualImageTask }, func(o *Options) { o.Vision = true },
 		func(o *Options) { o.GGUFFile = "different.gguf" }, func(o *Options) { o.TrustModelCode = true },
 	} {
 		bad := o
@@ -61,6 +61,37 @@ func TestDiffusionPlanningIsolation(t *testing.T) {
 	}
 	if err := DeployNative(context.Background(), p, 0); err == nil || !strings.Contains(err.Error(), "--diffusion-runtime-dir") {
 		t.Fatal("unexpected fallback when source is absent")
+	}
+}
+
+func TestDiffusionEditPlanningIsolation(t *testing.T) {
+	gen := diffusionFixturePlan(t)
+	h := Host{OS: "linux", Arch: "amd64", GPUs: []GPU{gen.GPU}, ModelCacheDir: gen.ModelCacheDir}
+	o := Options{Diffusion: true, Task: diffusionEditTask, Backend: "native", Research: true, Experimental: true, APIKeyFile: gen.APIKeyFile, Name: gen.Name, Port: gen.Port}
+	var m Model
+	m.Hub.ID, m.Hub.SHA = diffusionRepo, diffusionRevision
+	edit, err := BuildPlan(m, h, o)
+	if err != nil || edit.Diffusion != diffusionEditProfile || edit.RecipeID != diffusionEditProfile || edit.Task != diffusionEditTask ||
+		edit.WeightBytes != 11059819128 || edit.WeightResidentBytes != edit.WeightBytes || len(edit.Files) != 4 ||
+		edit.Files[3] != "mmproj-Qwen3VL-8B-Instruct-F16.gguf" || diffusionCache(edit) == diffusionCache(gen) {
+		t.Fatalf("edit profile selection or pinned bundle: %+v, %v", edit, err)
+	}
+	pins, err := diffusionRuntimePins(diffusionEditTask)
+	if err != nil || validateDiffusionPlan(edit) != nil || pins[0].Name != "modelship-sd-edit-worker" || pins[0] == diffusionWorkerPin ||
+		pins[1].Name != "modelship-sd-probe" || pins[1] == diffusionProbePin {
+		t.Fatal("edit profile did not select the reviewed resident runtime")
+	}
+	for _, change := range []func(*Plan){
+		func(p *Plan) { p.Task = diffusionTask }, func(p *Plan) { p.RecipeID = diffusionProfileID },
+		func(p *Plan) { p.Diffusion = diffusionProfileID }, func(p *Plan) { p.Files = gen.Files },
+		func(p *Plan) { p.WeightResidentBytes = gen.WeightResidentBytes },
+	} {
+		bad := edit
+		bad.Blockers = nil
+		change(&bad)
+		if validateDiffusionPlan(bad) == nil {
+			t.Fatal("saved edit plan accepted a different task, profile, or bundle")
+		}
 	}
 }
 

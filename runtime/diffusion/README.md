@@ -1,12 +1,12 @@
 # GGUF diffusion runtime investigation
 
-**Draft candidate only.** The published installer does not include this backend. This branch adds a build-from-source native deployment path for generation with a locally supplied, exact runtime pair. It does not change existing llama.cpp or Diffusers workers. The probe cannot load a model, open a port, or generate an image. The private stdio worker never opens a port. The stock upstream HTTP server is not part of this build.
+**Draft candidate only.** The published installer does not include this backend. This branch adds build-from-source native generation and edit-only candidates with locally supplied, exact runtime pairs. It does not change existing llama.cpp or Diffusers workers. The probe cannot load a model, open a port, or generate an image. The private stdio worker never opens a port. The stock upstream HTTP server is not part of this build.
 
 ## Runtime probe
 
 - [stable-diffusion.cpp `master-1106-532d2c1`](https://github.com/leejet/stable-diffusion.cpp/releases/tag/master-1106-532d2c1), source `532d2c15c430a785a712b2d94281f04e733008a4`. Its ggml gitlink is the leejet fork at `eeda9ec48fc84a3df0bb9dcc19ae9053075a2539`. Both sources are MIT; that does not grant rights to model weights or CUDA libraries.
 - No standalone CUDA Linux asset is published for that release. The upstream CUDA container is Ubuntu 24.04/CUDA 12.6.3. This probe instead checks a native Linux AMD64 build on Ubuntu 22.04/CUDA 12.8.1, SM80 plus compute80 PTX. The source archives, CMake archive and builder image are independently pinned; configure and compile are offline. CUTLASS, the HTTP server, media output extensions, RPC and dynamic backend plug-ins are excluded.
-- The candidate export contains the probe, private generation worker, separate edit smoke executable, checksums, and ELF symbol/dependency reports. It does **not** contain NVIDIA userspace libraries, host drivers, or a redistributable runtime. The build-time ABI check permits only the expected missing host `libcuda.so.1` on a GPU-less runner. It does not run a driver stub.
+- The candidate export contains the probe, private generation worker, separate edit smoke and resident edit executables, checksums, and ELF symbol/dependency reports. It does **not** contain NVIDIA userspace libraries, host drivers, or a redistributable runtime. The build-time ABI check permits only the expected missing host `libcuda.so.1` on a GPU-less runner. It does not run a driver stub.
 - `modelship-sd-probe --version` reports the linked source commit. On an authorized machine with reviewed CUDA userspace, `--cuda-check` is intended to verify exactly one visible CUDA device with a non-host 4 KiB allocation; it refuses the ggml unified-memory override. This would not establish inference compatibility, full graph placement, or peak memory.
 
 ## First model candidate: Qwen Image 2.1 (non-Turbo)
@@ -105,6 +105,21 @@ The default listener is loopback, and bearer auth is required even there. Use a 
 The draft CLI at `615e4edc8e10ebb05d2e11c510c587234c9e3465` passed a generation lifecycle test on a separate, fresh Ubuntu 22.04 AMD64 host with an RTX A6000 (49,140 MiB initially free, driver 610.43.02). `plan` left the private weight cache empty. `deploy` used the pinned runtime pair and components, and the authenticated loopback service reached readiness after warm-up. Unauthenticated health returned 401, authenticated discovery described the fixed profile, editing returned 409, an unsupported output size returned 422, and an overlapping request returned 503 without preventing the active generation from completing.
 
 Two distinct prompts returned valid 512×512 PNGs in **24.29 s** and **25.25 s**. The images visibly matched the requested subjects: a red sailboat in watercolor and a yellow lemon on a blue plate. After `stop` and `start`, the supervisor PID and run ID changed, the three cached model files were unchanged, and readiness returned in **106.04 s**. Repeating the first request at seed 43 returned a byte-identical PNG in **24.19 s** on this host. Whole-device VRAM reached **10,280 MiB in 331 samples** taken at roughly 250 ms intervals during the API and restart checks, not including the first deployment. The GPU returned to 0 MiB used after uninstall. These are scoped observations, not a minimum fit claim or a cross-host determinism guarantee. Live disconnect and forced-failure paths have weight-free tests only.
+
+## Draft edit-only deployment (resident protocol v3)
+
+The one-shot protocol v2 executable is **not** the service binary. The separate resident `modelship-sd-edit-worker` accepts multiple sequential frames with the same layout, without waiting for EOF after each frame. The supervisor requires a v3 handshake and a completed, synchronized edit of the synthetic red-mug fixture in that same child before reporting ready. It never treats an edit as generation or restarts a failed request.
+
+Select `--task image-to-image` explicitly with the same repository, immutable revision, bearer key and separate consent flags as above. Use a new deployment name, an available port, and the exact edit worker/probe pair from [CUDA build 44470677936](https://github.com/0xburden/modelship/actions/runs/44470677936) in `--diffusion-runtime-dir`. The generation profile still requires its original pair. The edit plan uses a separate private cache for all four artifacts, including the F16 projector. The default `auto` task still selects generation. The 40 GiB free and idle GPU admission gate is unchanged.
+
+| Edit runtime executable | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `modelship-sd-edit-worker` | 115,614,808 | `519b0f987681f72da95d75df2d40e801cb23490b5a840d417510399fedabdaa2` |
+| `modelship-sd-probe` | 72,731,640 | `e5f7357f4e920d336d04215c71cd605e37459de62f23ae5735a5724701352c3e` |
+
+Once ready, authenticated discovery reports `image-to-image` and `image_edit` limits only. `POST /v1/images/edits` accepts the same fixed output settings and optional seed as generation, plus `image_b64`: one canonical base64-encoded, opaque, static 512×512 PNG or JPEG of at most 2 MiB before base64. No input resizing, transparency flattening, external image URLs, masks or adapters. The worker receives only RGB pixels and the prompt/seed. The result format is the same base64 PNG with the actual seed. The generation route returns 409. A second edit while the slot is held returns 503; disconnect does not release it before synchronization. Unsupported requests do not run inference.
+
+The edit API and repeated worker framing are covered by weight-free tests. The A6000 result above was for the **one-shot** executable; it does not validate this resident service. Combined generation/editing, LoRA and durable runtime distribution remain separate milestones.
 
 ## Placement and remaining validation gates
 

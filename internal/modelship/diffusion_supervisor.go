@@ -16,7 +16,7 @@ import (
 // command: absolute pinned runtime and bundle, a curated environment, inherited
 // per-GPU lock in ExtraFiles, and fresh device admission. No shell or child HTTP.
 // The child stays in the native supervisor's process group so stop can reap both.
-func serveDiffusion(ctx context.Context, listener net.Listener, cmd *exec.Cmd, model, revision, runID, key string, startupTimeout, requestTimeout time.Duration) error {
+func serveDiffusion(ctx context.Context, listener net.Listener, cmd *exec.Cmd, task, model, revision, runID, key string, startupTimeout, requestTimeout time.Duration) error {
 	defer listener.Close()
 	if startupTimeout <= 0 || requestTimeout <= 0 {
 		return fmt.Errorf("invalid diffusion time budgets")
@@ -59,9 +59,12 @@ func serveDiffusion(ctx context.Context, listener net.Listener, cmd *exec.Cmd, m
 			_ = fromChild.Close()
 		})
 	}
-	gateway, err := newDiffusionGateway(model, revision, runID, key, func(prompt string, seed uint32) (*image.NRGBA, error) {
+	gateway, err := newDiffusionGatewayForTask(task, model, revision, runID, key, func(prompt string, seed uint32, rgb []byte) (*image.NRGBA, error) {
 		if err := deadlines(requestTimeout); err != nil {
 			return nil, err
+		}
+		if task == diffusionEditTask {
+			return wire.edit(prompt, seed, rgb)
 		}
 		return wire.generate(prompt, seed)
 	}, kill)
@@ -89,12 +92,21 @@ func serveDiffusion(ctx context.Context, listener net.Listener, cmd *exec.Cmd, m
 	go func() { served <- server.Serve(listener) }()
 	warmup := make(chan error, 1)
 	go func() {
+		// L proves successful construction only. Require a synchronized
+		// response for the selected task in this very same child before ready.
+		if task == diffusionEditTask {
+			if err := wire.loadedVersion(diffusionEditProtocol); err != nil {
+				warmup <- err
+				return
+			}
+			_, err := wire.edit(diffusionEditWarmupPrompt, diffusionWarmupSeed, diffusionEditWarmupReference())
+			warmup <- err
+			return
+		}
 		if err := wire.loaded(); err != nil {
 			warmup <- err
 			return
 		}
-		// L proves successful construction only. Probe all generation paths and
-		// a completed CUDA synchronization before the first readiness success.
 		_, err := wire.generate(diffusionWarmupPrompt, diffusionWarmupSeed)
 		warmup <- err
 	}()
@@ -118,7 +130,7 @@ loop:
 		case err := <-warmup:
 			warmup = nil
 			if err != nil {
-				result = fmt.Errorf("diffusion startup or synchronized generation probe failed")
+				result = fmt.Errorf("diffusion startup or synchronized %s probe failed", task)
 				break loop
 			}
 			gateway.warmed()

@@ -635,7 +635,7 @@ func waitNative(ctx context.Context, cfg NativeConfig, dir string, run NativeRun
 				return fmt.Errorf("native readiness authentication rejected; worker retained; check key and restart after rotation")
 			}
 			if resp.StatusCode == 200 && decodeErr == nil && health.Ready && health.Model == cfg.Plan.Model && health.Revision == cfg.Plan.Revision && health.RunID == run.RunID && imageHealthMatches(cfg.Plan.Task, health.ImageTasks) && loraHealthMatches(cfg.LoRA, health.LoRARevision) &&
-				(cfg.Plan.Diffusion == "" || health.Runtime == diffusionRuntime && health.Task == diffusionTask) {
+				(cfg.Plan.Diffusion == "" || health.Runtime == diffusionRuntime && health.Task == cfg.Plan.Task) {
 				return nil
 			}
 		}

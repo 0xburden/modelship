@@ -29,6 +29,28 @@ const diffusionStateHeadroom = int64(4 << 30)
 var diffusionWorkerPin = ArtifactPin{Name: "modelship-sd-worker", Size: 115618872, SHA256: "5e1e684468576b74040a7c201eff289452511136f34477c9f9fbdcfafdbba1e1"}
 var diffusionProbePin = ArtifactPin{Name: "modelship-sd-probe", Size: 72735736, SHA256: "92ff72e75d53e502c0e5dffd1cf618201c28eb34a229b44775134d87b385c134"}
 
+// Protocol-3 pair from CUDA build 44470677936 at 44b403789a9185d5d8bd61bac101574828db862d.
+// The verified ABI and artifact checks do not substitute for a resident GPU test.
+var diffusionEditWorkerPin = ArtifactPin{Name: "modelship-sd-edit-worker", Size: 115614808, SHA256: "519b0f987681f72da95d75df2d40e801cb23490b5a840d417510399fedabdaa2"}
+var diffusionEditProbePin = ArtifactPin{Name: "modelship-sd-probe", Size: 72731640, SHA256: "e5f7357f4e920d336d04215c71cd605e37459de62f23ae5735a5724701352c3e"}
+
+func diffusionRuntimePins(task string) ([2]ArtifactPin, error) {
+	switch task {
+	case diffusionTask:
+		return [2]ArtifactPin{diffusionWorkerPin, diffusionProbePin}, nil
+	case diffusionEditTask:
+		for _, pin := range [2]ArtifactPin{diffusionEditWorkerPin, diffusionEditProbePin} {
+			digest, err := hex.DecodeString(pin.SHA256)
+			if pin.Size <= 0 || err != nil || len(digest) != sha256.Size || hex.EncodeToString(digest) != pin.SHA256 {
+				return [2]ArtifactPin{}, fmt.Errorf("GGUF edit runtime has not been verified and pinned")
+			}
+		}
+		return [2]ArtifactPin{diffusionEditWorkerPin, diffusionEditProbePin}, nil
+	default:
+		return [2]ArtifactPin{}, fmt.Errorf("invalid reviewed GGUF diffusion task")
+	}
+}
+
 type diffusionWheel struct {
 	ArtifactPin
 	members []string
@@ -215,7 +237,7 @@ func diffusionDisk(dir string, need int64) (syscall.Statfs_t, error) {
 }
 
 func diffusionCache(p Plan) string {
-	return filepath.Join(p.ModelCacheDir, "modelship-diffusion", diffusionProfileID)
+	return filepath.Join(p.ModelCacheDir, "modelship-diffusion", p.Diffusion)
 }
 
 // Scope the same-account flock to the same location as the one-shot harness.
@@ -335,10 +357,10 @@ func diffusionCacheRemaining(cache string, pin ArtifactPin) int64 {
 	return pin.Size
 }
 
-func probeDiffusionCUDA(ctx context.Context, dir, uuid string, libs, lock *os.File) error {
+func probeDiffusionCUDA(ctx context.Context, dir, uuid string, pin ArtifactPin, libs, lock *os.File) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	binary, err := diffusionVerifiedFile(ctx, dir, diffusionProbePin, 0500, io.Discard)
+	binary, err := diffusionVerifiedFile(ctx, dir, pin, 0500, io.Discard)
 	if err != nil {
 		return err
 	}
@@ -382,6 +404,10 @@ func diffusionHostABI() error {
 
 func deployDiffusion(ctx context.Context, p Plan, source string, wait time.Duration) error {
 	if err := validateDiffusionPlan(p); err != nil {
+		return err
+	}
+	pins, err := diffusionRuntimePins(p.Task)
+	if err != nil {
 		return err
 	}
 	if err := validateNativeAccess(p, true); err != nil {
@@ -434,7 +460,7 @@ func deployDiffusion(ctx context.Context, p Plan, source string, wait time.Durat
 		}
 	}
 	missing := int64(0)
-	for _, f := range diffusionArtifacts() {
+	for _, f := range diffusionArtifacts(p.Task) {
 		missing += diffusionCacheRemaining(cache, f.ArtifactPin)
 	}
 	cacheFS, err := diffusionDisk(cache, missing+(1<<30))
@@ -446,7 +472,7 @@ func deployDiffusion(ctx context.Context, p Plan, source string, wait time.Durat
 			return err
 		}
 	}
-	for _, pin := range []ArtifactPin{diffusionWorkerPin, diffusionProbePin} {
+	for _, pin := range pins {
 		if err := diffusionCopyBinary(ctx, source, dir, pin); err != nil {
 			return err
 		}
@@ -476,13 +502,13 @@ func deployDiffusion(ctx context.Context, p Plan, source string, wait time.Durat
 	}
 	err = admitDiffusionGPU(ctx, p)
 	if err == nil {
-		err = probeDiffusionCUDA(ctx, dir, p.GPU.UUID, libsFD, lock)
+		err = probeDiffusionCUDA(ctx, dir, p.GPU.UUID, pins[1], libsFD, lock)
 	}
 	lock.Close()
 	if err != nil {
 		return err
 	}
-	for _, f := range diffusionArtifacts() {
+	for _, f := range diffusionArtifacts(p.Task) {
 		fmt.Printf("Verifying or downloading %s @ %s / %s (%d bytes).\n", f.Repo, f.Revision, f.RemotePath, f.Size)
 		url := "https://huggingface.co/" + f.Repo + "/resolve/" + f.Revision + "/" + escapeWeightPath(f.RemotePath)
 		if err := downloadVerified(ctx, client, url, "", filepath.Join(cache, f.Name), f.ArtifactPin); err != nil {
@@ -525,6 +551,10 @@ func runDiffusionNative(ctx context.Context, cfg NativeConfig, dir, runID string
 	if err := diffusionHostABI(); err != nil {
 		return err
 	}
+	pins, err := diffusionRuntimePins(p.Task)
+	if err != nil {
+		return err
+	}
 	cache, inputs, libs := diffusionCache(p), filepath.Join(dir, "cuda-inputs"), filepath.Join(dir, "cuda")
 	for _, root := range []string{dir, cache, inputs, libs} {
 		if err := diffusionDir(root); err != nil {
@@ -536,7 +566,7 @@ func runDiffusionNative(ctx context.Context, cfg NativeConfig, dir, runID string
 		return err
 	}
 	defer lifeLock.Close()
-	binary, err := diffusionVerifiedFile(ctx, dir, diffusionWorkerPin, 0500, io.Discard)
+	binary, err := diffusionVerifiedFile(ctx, dir, pins[0], 0500, io.Discard)
 	if err != nil {
 		return err
 	}
@@ -563,7 +593,7 @@ func runDiffusionNative(ctx context.Context, cfg NativeConfig, dir, runID string
 	if err != nil || len(entries) != 3 {
 		return fmt.Errorf("unexpected contents of private CUDA library directory")
 	}
-	for _, f := range diffusionArtifacts() {
+	for _, f := range diffusionArtifacts(p.Task) {
 		if err := diffusionCheckFile(ctx, cachePath, f.ArtifactPin, 0600, io.Discard); err != nil {
 			return err
 		}
@@ -585,15 +615,19 @@ func runDiffusionNative(ctx context.Context, cfg NativeConfig, dir, runID string
 	if err := admitDiffusionGPU(ctx, p); err != nil {
 		return err
 	}
-	if err := probeDiffusionCUDA(ctx, dir, p.GPU.UUID, libsFD, lock); err != nil {
+	if err := probeDiffusionCUDA(ctx, dir, p.GPU.UUID, pins[1], libsFD, lock); err != nil {
 		return err
 	}
 	if err := admitDiffusionGPU(ctx, p); err != nil {
 		return err
 	}
-	cmd := exec.Command(diffusionFD(3), "--private-stdio", diffusionFD(5))
+	mode := "--private-stdio"
+	if p.Task == diffusionEditTask {
+		mode = "--private-edit-worker-stdio"
+	}
+	cmd := exec.Command(diffusionFD(3), mode, diffusionFD(5))
 	cmd.Env, cmd.Dir = diffusionEnv(dir, p.GPU.UUID, diffusionFD(4)), dir
 	cmd.ExtraFiles = []*os.File{binary, libsFD, cacheFD, lock, lifeLock}
-	fmt.Println("Loading reviewed GGUF diffusion weights and running fixed startup generation probe.")
-	return serveDiffusion(ctx, listener, cmd, p.Model, p.Revision, runID, key, diffusionStartupTimeout, diffusionRequestTimeout)
+	fmt.Printf("Loading reviewed GGUF diffusion weights and running fixed startup %s probe.\n", p.Task)
+	return serveDiffusion(ctx, listener, cmd, p.Task, p.Model, p.Revision, runID, key, diffusionStartupTimeout, diffusionRequestTimeout)
 }

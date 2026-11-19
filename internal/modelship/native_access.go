@@ -317,7 +317,7 @@ func nativeHealth(ctx context.Context, cfg NativeConfig, run NativeRun) (bool, s
 	if !health.Ready || health.Model != cfg.Plan.Model || health.Revision != cfg.Plan.Revision || health.RunID != run.RunID || (!imageHealthMatches(cfg.Plan.Task, health.ImageTasks) || !loraHealthMatches(cfg.LoRA, health.LoRARevision)) {
 		return false, "worker identity/readiness mismatch"
 	}
-	if cfg.Plan.Diffusion != "" && (health.Runtime != diffusionRuntime || health.Task != diffusionTask) {
+	if cfg.Plan.Diffusion != "" && (health.Runtime != diffusionRuntime || health.Task != cfg.Plan.Task) {
 		return false, "diffusion runtime/task mismatch"
 	}
 	return true, ""
