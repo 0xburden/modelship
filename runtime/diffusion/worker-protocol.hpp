@@ -92,4 +92,39 @@ int serve(FILE *in, FILE *out, Generate generate) {
         }
     }
 }
+// Edit candidate only: exactly one frame with a uint32 seed, uint16 prompt
+// length, prompt bytes, and 512x512 interleaved RGB. No paths, dimensions,
+// encoded image formats, or additional references cross this boundary.
+constexpr unsigned char edit_protocol = 2;
+constexpr uint32_t reference_bytes = 3 * side * side;
+
+template <typename Edit>
+int serve_edit(FILE *in, FILE *out, Edit edit) {
+    if (!write_frame(out, 'L', edit_protocol)) return 1;
+    unsigned char header[4];
+    unsigned char fields[6];
+    if (std::fread(header, 1, sizeof(header), in) != sizeof(header)) return 1;
+    const uint32_t length = read_u32(header);
+    if (length < sizeof(fields) + 1 + reference_bytes ||
+        length > sizeof(fields) + max_prompt + reference_bytes ||
+        std::fread(fields, 1, sizeof(fields), in) != sizeof(fields)) return 1;
+    const uint32_t text_size = uint32_t(fields[4]) << 8 | uint32_t(fields[5]);
+    if (text_size == 0 || text_size > max_prompt ||
+        length != sizeof(fields) + text_size + reference_bytes) return 1;
+    std::array<char, max_prompt> text{};
+    if (std::fread(text.data(), 1, text_size, in) != text_size) return 1;
+    const std::string_view prompt(text.data(), text_size);
+    if (!valid_prompt(prompt)) {
+        write_frame(out, 'V');
+        return 1;
+    }
+    std::array<unsigned char, reference_bytes> pixels;
+    if (std::fread(pixels.data(), 1, pixels.size(), in) != pixels.size() ||
+        std::fgetc(in) != EOF || !std::feof(in) || std::ferror(in)) return 1;
+    if (!edit(read_u32(fields), prompt, pixels.data(), out)) {
+        if (!std::ferror(out)) write_frame(out, 'F');
+        return 1;
+    }
+    return 0;
+}
 } // namespace modelship::diffusion

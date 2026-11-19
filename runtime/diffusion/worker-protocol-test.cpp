@@ -52,6 +52,39 @@ std::string request(const std::string &prompt) {
     for (unsigned i = 0; i < 4; ++i) header[i] = static_cast<char>(length >> (24 - 8 * i));
     return header + std::string(4, static_cast<char>(0xff)) + prompt;
 }
+std::string edit_request(const std::string &prompt) {
+    std::string frame(10, '\0');
+    const auto length = static_cast<uint32_t>(6 + prompt.size() + reference_bytes);
+    for (unsigned i = 0; i < 4; ++i) frame[i] = static_cast<char>(length >> (24 - 8 * i));
+    frame[7] = 43;
+    frame[8] = static_cast<char>(prompt.size() >> 8);
+    frame[9] = static_cast<char>(prompt.size());
+    return frame + prompt + std::string(reference_bytes - 1, 'x') + 'y';
+}
+
+void check_edit(const std::string &input, std::string_view wanted_prompt, bool success,
+                int wanted_calls, std::string_view tail) {
+    const std::unique_ptr<FILE, decltype(&std::fclose)> in(std::tmpfile(), std::fclose);
+    const std::unique_ptr<FILE, decltype(&std::fclose)> out(std::tmpfile(), std::fclose);
+    check(in && out, "temporary edit files");
+    check(std::fwrite(input.data(), 1, input.size(), in.get()) == input.size(), "write edit fixture");
+    std::rewind(in.get());
+    int calls = 0;
+    const int status = serve_edit(in.get(), out.get(), [&](uint32_t seed, std::string_view prompt,
+                                                        const unsigned char *rgb, FILE *) {
+        ++calls;
+        check(seed == 43 && prompt == wanted_prompt, "edit seed or prompt did not round trip");
+        check(rgb[0] == 'x' && rgb[reference_bytes - 1] == 'y', "edit RGB did not round trip");
+        return success;
+    });
+    check(status == (success ? 0 : 1) && calls == wanted_calls, "wrong edit status or engine calls");
+    std::rewind(out.get());
+    for (const int byte : {0, 0, 0, 2, int('L'), int(edit_protocol)}) {
+        check(std::fgetc(out.get()) == byte, "invalid edit handshake");
+    }
+    for (const char byte : tail) check(std::fgetc(out.get()) == byte, "invalid edit failure status");
+    check(std::fgetc(out.get()) == EOF, "unexpected extra edit bytes");
+}
 } // namespace
 
 int main() {
@@ -75,5 +108,17 @@ int main() {
     check_session(valid.substr(0, valid.size() - 1), 1, 0, false, {'L'});
     check_session(std::string(4, static_cast<char>(0xff)), 1, 0, false, {'L'});
     check_session(std::string(4, '\0'), 1, 0, false, {'L'});
+    const auto edit = edit_request("make it blue");
+    check_edit(edit, "make it blue", true, 1, {});
+    check_edit(edit_request(at_limit), at_limit, true, 1, {});
+    check_edit(edit, "make it blue", false, 1, std::string_view("\0\0\0\1F", 5));
+    check_edit(edit_request("<image1>"), {}, false, 0, std::string_view("\0\0\0\1V", 5));
+    check_edit(edit_request(at_limit + 'a'), {}, false, 0, {});
+    check_edit(edit.substr(0, edit.size() - 1), {}, false, 0, {});
+    check_edit(edit + edit, {}, false, 0, {});
+    check_edit(valid, {}, false, 0, {});
+    auto wrong_length = edit;
+    wrong_length[9]++;
+    check_edit(wrong_length, {}, false, 0, {});
     std::puts("MODELSHIP_SD_PROTOCOL_TEST_PASSED");
 }

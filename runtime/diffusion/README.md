@@ -6,7 +6,7 @@
 
 - [stable-diffusion.cpp `master-1106-532d2c1`](https://github.com/leejet/stable-diffusion.cpp/releases/tag/master-1106-532d2c1), source `532d2c15c430a785a712b2d94281f04e733008a4`. Its ggml gitlink is the leejet fork at `eeda9ec48fc84a3df0bb9dcc19ae9053075a2539`. Both sources are MIT; that does not grant rights to model weights or CUDA libraries.
 - No standalone CUDA Linux asset is published for that release. The upstream CUDA container is Ubuntu 24.04/CUDA 12.6.3. This probe instead checks a native Linux AMD64 build on Ubuntu 22.04/CUDA 12.8.1, SM80 plus compute80 PTX. The source archives, CMake archive and builder image are independently pinned; configure and compile are offline. CUTLASS, the HTTP server, media output extensions, RPC and dynamic backend plug-ins are excluded.
-- The candidate export contains the probe and private worker, checksums, and ELF symbol/dependency reports. It does **not** contain NVIDIA userspace libraries, host drivers, or a redistributable runtime. The build-time ABI check permits only the expected missing host `libcuda.so.1` on a GPU-less runner. It does not run a driver stub.
+- The candidate export contains the probe, private generation worker, separate edit smoke executable, checksums, and ELF symbol/dependency reports. It does **not** contain NVIDIA userspace libraries, host drivers, or a redistributable runtime. The build-time ABI check permits only the expected missing host `libcuda.so.1` on a GPU-less runner. It does not run a driver stub.
 - `modelship-sd-probe --version` reports the linked source commit. On an authorized machine with reviewed CUDA userspace, `--cuda-check` is intended to verify exactly one visible CUDA device with a non-host 4 KiB allocation; it refuses the ggml unified-memory override. This would not establish inference compatibility, full graph placement, or peak memory.
 
 ## First model candidate: Qwen Image 2.1 (non-Turbo)
@@ -63,6 +63,22 @@ The command checks the executable and all three components, checks free VRAM and
 One offline request passed on a dedicated Linux AMD64 Ubuntu 22.04 host with an NVIDIA RTX A6000 (49,140 MiB available before launch; driver 610.43.02). The worker from [CUDA build 44424659799](https://github.com/0xburden/modelship/actions/runs/44424659799) used the three pinned generation files and private, hash-verified CUDA 12.8.90 runtime and cuBLAS 12.8.4.1 libraries. No host libraries or drivers were modified.
 
 The fixed 512×512, 40-step, seed-43 request took **25.07 seconds after context load** and produced a verified PNG of the requested red sailboat in watercolor. Whole-device VRAM usage reached **10,280 MiB in 250 ms samples** across load and generation, then returned to zero after exit. Sampling can miss short peaks. This one result does not establish a minimum VRAM requirement, and it does not lower the 40 GiB experimental admission threshold. The test files were removed from the host. This one-shot did not cover editing, larger sizes, repeated requests, or service lifecycle.
+
+## Separate edit smoke candidate (protocol v2)
+
+`modelship-sd-edit-candidate` is a different executable, not an upgrade to the installed generation worker. It requires the same three local model files **and** the matching F16 projector above, using the same patched CUDA placement. The launcher verifies all four complete hashes and requires an empty graphics and compute inventory and at least 40 GiB free on the selected physical GPU. No CLI deployment, public route, combined mode or LoRA is enabled by this candidate.
+
+Use the trusted CUDA CI checksum for the edit executable and the same private host and file layout as for the generation smoke. Run on an authorized dedicated host:
+
+```sh
+python3 runtime/diffusion/candidate_edit_smoke.py --research --experimental \
+  --worker "$EDIT_WORKER" --worker-sha256 "$EDIT_WORKER_SHA256" \
+  --bundle "$FOUR_COMPONENT_BUNDLE" --gpu "$GPU_UUID" --output "$EDIT_PNG"
+```
+
+The program generates a fixed synthetic reference drawing and sends one instruction to turn its red mug blue while preserving the yellow lemon and composition. The length-prefixed request contains a 32-bit seed, 16-bit prompt byte count, UTF-8 prompt, and exactly 512×512 raw RGB pixels. Both integers are big-endian. EOF is required before inference; a second frame, a truncated frame and a generation-v1 handshake are rejected. The private worker passes a single typed reference tensor to the pinned C API and only returns a 512×512 image after CUDA synchronization. It accepts no input path, remote URL, encoded attachment, or resize options. A loaded context is not proof that edit conditioning works: pinned Qwen edit conditioning rejects missing vision and an empty condition aborts the request. An edit is not retried as generation.
+
+The worker uses seed 43, 40 Euler steps and text CFG 6. This is an unvalidated GPU candidate until the returned image is verified to reflect both the reference and the requested edit. Weight-free tests only cover framing, the fixed reference, the bundle selection, and pipe/admission failures.
 
 ## Draft native deployment (generation only)
 

@@ -11,6 +11,7 @@ import stat
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from xml.etree import ElementTree
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,10 @@ GENERATION_BUNDLE = (
               "67d1659bfe71b89d50b45a4ad1a9e5b997e5bb16ce5da66a6a6167abd569e9e2"),
     Component("qwen_image_2.1_vae_bf16.safetensors", 675509688,
               "bb21f7473051e1ac368515dd3f2e15cd44d7a11748ee8823e1ddca3e4876b7c9"),
+)
+EDIT_BUNDLE = GENERATION_BUNDLE + (
+    Component("mmproj-Qwen3VL-8B-Instruct-F16.gguf", 1159029824,
+              "ca524100ebf825c9a870db1c580d03879e0da0ab2541697e2458e64891cf9d38"),
 )
 # First smoke only, intentionally conservative and non-overridable. This is
 # not an estimate of minimum residency or the memory requirement for deployment.
@@ -81,14 +86,23 @@ def _verify_components(directory: Path, components: tuple[Component, ...]):
         os.close(dir_fd)
 
 
-def verify_generation_bundle(directory: Path):
-    """Check exact local weight files. The same account must keep them unchanged through use."""
+def _verify_bundle(directory, components):
     try:
-        _verify_components(directory, GENERATION_BUNDLE)
+        _verify_components(directory, components)
     except (OSError, RuntimeError) as error:
         if isinstance(error, PreflightError):
             raise
         raise PreflightError("Could not verify the private model bundle.") from None
+
+
+def verify_generation_bundle(directory: Path):
+    """Check exact local weight files. The same account must keep them unchanged through use."""
+    _verify_bundle(directory, GENERATION_BUNDLE)
+
+
+def verify_edit_bundle(directory: Path):
+    """Require the exact generation components and the separate matching F16 projector."""
+    _verify_bundle(directory, EDIT_BUNDLE)
 
 
 def _admit_gpu(rows: str, compute_processes: str, uuid: str):
@@ -129,3 +143,24 @@ def admit_smoke_gpu(uuid: str):
     except (OSError, UnicodeError, subprocess.SubprocessError):
         raise PreflightError("Could not obtain the selected GPU's memory and process inventory.") from None
     return _admit_gpu(rows, procs, uuid)
+
+
+def admit_edit_smoke_gpu(uuid: str):
+    """Also fail closed if the selected GPU's graphics inventory is not empty."""
+    free = admit_smoke_gpu(uuid)
+    try:
+        xml = subprocess.check_output(["/usr/bin/nvidia-smi", "-i", uuid, "-q", "-x"],
+                                      env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"}, timeout=10,
+                                      stderr=subprocess.DEVNULL)
+        if len(xml) > 1024 * 1024:
+            raise ValueError
+        root = ElementTree.fromstring(xml)
+        gpus = root.findall("gpu")
+        if root.tag != "nvidia_smi_log" or len(gpus) != 1 or gpus[0].findtext("uuid", "").strip() != uuid:
+            raise ValueError
+        inventories = gpus[0].findall("processes")
+        if len(inventories) != 1 or len(inventories[0]) != 0 or (inventories[0].text or "").strip():
+            raise ValueError
+    except (OSError, ValueError, ElementTree.ParseError, subprocess.SubprocessError):
+        raise PreflightError("The edit smoke requires a verified empty graphics and compute inventory.") from None
+    return free

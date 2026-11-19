@@ -46,3 +46,13 @@ if(SD_CUDA)
     target_link_libraries(modelship-sd-worker PRIVATE CUDA::cudart)
     target_compile_definitions(modelship-sd-worker PRIVATE MODELSHIP_SD_CUDA)
 endif()
+
+if(SD_CUDA)
+    # Separate executable and discriminator: not a replacement for the
+    # already validated generation-only worker or its installed protocol.
+    add_executable(modelship-sd-edit-candidate worker.cpp)
+    set_target_properties(modelship-sd-edit-candidate PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+    target_link_libraries(modelship-sd-edit-candidate PRIVATE stable-diffusion CUDA::cudart)
+    target_compile_features(modelship-sd-edit-candidate PRIVATE cxx_std_17)
+    target_compile_definitions(modelship-sd-edit-candidate PRIVATE MODELSHIP_SD_CUDA MODELSHIP_SD_EDIT)
+endif()

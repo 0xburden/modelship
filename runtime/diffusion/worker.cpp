@@ -23,7 +23,7 @@ using Context = std::unique_ptr<sd_ctx_t, decltype(&sd_ctx_free)>;
 using Result = std::unique_ptr<sd_result_t, decltype(&sd_result_free)>;
 using Stream = std::unique_ptr<FILE, decltype(&std::fclose)>;
 
-// The supervising process must check all three full digests and keep the
+// The supervising process must check all component digests and keep the
 // bundle private/unchanged. These checks also catch wrong wiring before load.
 bool local_component(const std::string &path, uint64_t bytes) {
     struct stat st{};
@@ -39,6 +39,10 @@ Context load(const std::string &dir) {
     if (!local_component(model, 4197494816) || !local_component(encoder, 5027784800) ||
         !local_component(vae, 675509688)) return context;
 
+#ifdef MODELSHIP_SD_EDIT
+    const std::string projector = dir + "/mmproj-Qwen3VL-8B-Instruct-F16.gguf";
+    if (!local_component(projector, 1159029824)) return context;
+#endif
     const Options opt(sd_ctx_opt_create(), sd_opt_free);
     if (!opt || sd_opt_set_string(opt.get(), "diffusion_model_path", model.c_str()) != SD_STATUS_OK ||
         sd_opt_set_string(opt.get(), "llm_path", encoder.c_str()) != SD_STATUS_OK ||
@@ -50,16 +54,24 @@ Context load(const std::string &dir) {
         sd_opt_set_bool(opt.get(), "eager_load", true) != SD_STATUS_OK ||
         sd_opt_set_int(opt.get(), "conditioning_cache_size", 0) != SD_STATUS_OK ||
         sd_opt_set_int(opt.get(), "n_threads", 2) != SD_STATUS_OK) return context;
+#ifdef MODELSHIP_SD_EDIT
+    if (sd_opt_set_string(opt.get(), "llm_vision_path", projector.c_str()) != SD_STATUS_OK) return context;
+#endif
     sd_ctx_t *raw = nullptr;
     const auto status = sd_ctx_create(opt.get(), &raw);
     context.reset(raw);
+    const char *version = context ? sd_get_model_version_name(context.get()) : nullptr;
     if (cudaDeviceSynchronize() != cudaSuccess || status != SD_STATUS_OK || !context ||
-        !sd_ctx_supports_image_generation(context.get()) ||
-        std::strcmp(sd_get_model_version_name(context.get()), "Qwen Image 2.1") != 0) context.reset();
+        !sd_ctx_supports_image_generation(context.get()) || !version ||
+        std::strcmp(version, "Qwen Image 2.1") != 0) context.reset();
     return context;
 }
 
-bool generate(sd_ctx_t *ctx, uint32_t seed, std::string_view prompt, FILE *out) {
+bool generate(sd_ctx_t *ctx, uint32_t seed, std::string_view prompt, FILE *out
+#ifdef MODELSHIP_SD_EDIT
+              , const unsigned char *reference
+#endif
+) {
     const Options opt(sd_img_gen_opt_create(), sd_opt_free);
     const std::string text(prompt);
     if (!opt || sd_opt_set_string(opt.get(), "prompt", text.c_str()) != SD_STATUS_OK ||
@@ -71,6 +83,13 @@ bool generate(sd_ctx_t *ctx, uint32_t seed, std::string_view prompt, FILE *out) 
         sd_opt_set_string(opt.get(), "sample.method", "euler") != SD_STATUS_OK ||
         sd_opt_set_float(opt.get(), "sample.guidance.txt_cfg", 6.0) != SD_STATUS_OK ||
         sd_opt_set_string(opt.get(), "cache.mode", "disabled") != SD_STATUS_OK) return false;
+#ifdef MODELSHIP_SD_EDIT
+    const int64_t shape[] = {3, side, side};
+    const std::unique_ptr<sd_tensor_t, decltype(&sd_tensor_free)>
+        tensor_ref(sd_tensor_create(SD_TENSOR_U8, 3, shape, reference, reference_bytes), sd_tensor_free);
+    const sd_tensor_t *refs[] = {tensor_ref.get()};
+    if (!tensor_ref || sd_opt_set_tensors(opt.get(), "ref_images", refs, 1) != SD_STATUS_OK) return false;
+#endif
     sd_result_t *raw = nullptr;
     const auto status = sd_generate_image(ctx, opt.get(), &raw);
     const Result result(raw, sd_result_free);
@@ -110,9 +129,16 @@ int worker(const char *dir) {
             modelship::cuda0(ggml_backend_dev_by_name("CUDA0"))) {
             const Context ctx = load(dir);
             if (ctx) {
+#ifdef MODELSHIP_SD_EDIT
+                return serve_edit(stdin, protocol_out.get(), [&](uint32_t seed, std::string_view prompt,
+                                                                const unsigned char *reference, FILE *out) {
+                    return generate(ctx.get(), seed, prompt, out, reference);
+                });
+#else
                 return serve(stdin, protocol_out.get(), [&](uint32_t seed, std::string_view prompt, FILE *out) {
                     return generate(ctx.get(), seed, prompt, out);
                 });
+#endif
             }
         }
         write_frame(protocol_out.get(), 'F');
@@ -128,11 +154,19 @@ int worker(const char *dir) {
 
 int main(int argc, char **argv) {
     if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {
+#ifdef MODELSHIP_SD_EDIT
+        std::printf("modelship-sd-edit-candidate protocol 2 stable-diffusion.cpp %s\n", sd_commit());
+#else
         std::printf("modelship-sd-worker protocol 1 stable-diffusion.cpp %s\n", sd_commit());
+#endif
         return 0;
     }
 #ifdef MODELSHIP_SD_CUDA
+#ifdef MODELSHIP_SD_EDIT
+    if (argc == 3 && std::strcmp(argv[1], "--private-edit-stdio") == 0) return worker(argv[2]);
+#else
     if (argc == 3 && std::strcmp(argv[1], "--private-stdio") == 0) return worker(argv[2]);
+#endif
 #else
     if (argc == 3 && std::strcmp(argv[1], "--private-stdio") == 0) {
         std::fputs("This worker requires CUDA; no CPU fallback.\n", stderr);

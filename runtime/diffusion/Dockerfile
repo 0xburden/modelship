@@ -36,16 +36,16 @@ RUN --network=none /src/cmake/bin/cmake -S /src/probe -B /src/build \
     -DGGML_CPU_ALL_VARIANTS=OFF -DGGML_OPENMP=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF \
     -DGGML_BMI2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF -DGGML_SSE42=ON \
     -DGGML_BUILD_TESTS=OFF -DGGML_BUILD_EXAMPLES=OFF && \
-    /src/cmake/bin/cmake --build /src/build --target modelship-sd-probe modelship-sd-worker --parallel 2
+    /src/cmake/bin/cmake --build /src/build --target modelship-sd-probe modelship-sd-worker modelship-sd-edit-candidate --parallel 2
 RUN --network=none mkdir -p /out/bin /out/evidence && \
-    cp /src/build/bin/modelship-sd-probe /src/build/bin/modelship-sd-worker /out/bin/ && \
+    cp /src/build/bin/modelship-sd-probe /src/build/bin/modelship-sd-worker /src/build/bin/modelship-sd-edit-candidate /out/bin/ && \
     cp /src/build/CMakeCache.txt /out/evidence/ && \
     sh /src/audit.sh /out/bin /out/evidence/elf-abi.txt /usr/local/cuda/targets/x86_64-linux/lib 1 && \
-    for name in modelship-sd-probe modelship-sd-worker; do \
+    for name in modelship-sd-probe modelship-sd-worker modelship-sd-edit-candidate; do \
         readelf -d "/out/bin/$name" > "/out/evidence/$name.dynamic.txt" && \
         grep -q 'libcudart.so.12' "/out/evidence/$name.dynamic.txt" && \
         ! grep -Eq 'RPATH|RUNPATH' "/out/evidence/$name.dynamic.txt" || exit 1; \
     done && \
-    cd /out && sha256sum bin/modelship-sd-probe bin/modelship-sd-worker > SHA256SUMS
+    cd /out && sha256sum bin/modelship-sd-probe bin/modelship-sd-worker bin/modelship-sd-edit-candidate > SHA256SUMS
 FROM scratch AS candidate
 COPY --from=build /out/ /

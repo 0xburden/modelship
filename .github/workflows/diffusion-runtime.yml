@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [feat/gguf-diffusion-runtime]
-    paths: ['runtime/diffusion/**', '.github/workflows/diffusion-runtime.yml']
+    paths: ['runtime/diffusion/**', '!runtime/diffusion/**/*.md', '.github/workflows/diffusion-runtime.yml']
 permissions:
   contents: read
 concurrency:
@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Test offline bundle verification and GPU admission
-        run: python3 -m unittest discover -s runtime/diffusion -p test_candidate_preflight.py
+        run: python3 -m unittest discover -s runtime/diffusion -p 'test_candidate_*.py'
       - name: Free disk on this disposable GitHub-hosted runner
         run: |
           test "$RUNNER_ENVIRONMENT" = github-hosted
