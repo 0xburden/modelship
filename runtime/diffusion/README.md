@@ -30,7 +30,7 @@ The worker is a child process, not a service. It uses the pinned C API and patch
 
 The future parent must verify the full runtime and three model component hashes, expose only the intended GPU, and pass a curated environment and a private immutable component directory. The worker checks the reviewed local names and byte counts before opening the models; that is not a substitute for hash verification. It requires one visible CUDA device, requests eager loading with no mmap or auto-fit, and checks the loaded model family. The parent needs a hard admission gate, process deadlines and exclusive ownership until the child drains or has been reaped. Do not run it against shared or unverified files.
 
-`candidate_preflight.py` implements the offline component checks and the NVIDIA inventory gate for a future smoke launcher. The proposed first test requires an idle, dedicated physical GPU with at least **40 GiB free** (compute capability 8.0+, driver 570.26+). This is a conservative, non-overridable test admission threshold, not a measured fit limit. A snapshot is not a reservation. The module does not download models, verify a CUDA runtime bundle, or launch the child. The weight-free tests run with `python3 -m unittest discover -s runtime/diffusion -p test_candidate_preflight.py`.
+`candidate_preflight.py` implements the offline component checks and the NVIDIA inventory gate for `candidate_smoke.py`. The proposed first test requires an idle, dedicated physical GPU with at least **40 GiB free** (compute capability 8.0+, driver 570.26+). This is a conservative, non-overridable test admission threshold, not a measured fit limit. A snapshot is not a reservation. The launcher does not download models or install any CUDA libraries. The weight-free tests run with `python3 -m unittest discover -s runtime/diffusion -p 'test_candidate_*.py'`.
 
 The private protocol uses a four-byte big-endian body length followed by the body:
 
@@ -43,6 +43,20 @@ The private protocol uses a four-byte big-endian body length followed by the bod
 | Worker → parent | `F` or premature EOF: fatal; close pipes, reap, and do not retry the request. |
 
 Keep one request outstanding. An invalid frame length or truncated frame closes the worker. The weight-free protocol test uses a simulated engine; it verifies acceptance, rejection, bounded response framing, and that a failed request cannot lead to a second inference. It does not establish CUDA load or generation success.
+
+## One-shot smoke command (not a deployment)
+
+Run only on a separately authorized, dedicated Linux AMD64 test host, using a regular user account, Python 3.10+, and compatible CUDA 12.8 userspace already available through the system loader. The candidate export does not supply those libraries. Do not modify the host drivers or copy libraries from an existing worker to make this pass.
+
+Prepare a canonical private directory (mode `0700`) for the verified CI worker executable (mode `0500`), and a private bundle with just the three generation components listed above (mode `0600` per file; use the file basenames, no projector). Provide the expected worker SHA-256 from the matching trusted CI run, not a hash calculated from an unverified download. Choose a new output path in a private directory. With explicit research and experimental consent:
+
+```sh
+python3 runtime/diffusion/candidate_smoke.py --research --experimental \
+  --worker "$WORKER" --worker-sha256 "$WORKER_SHA256" \
+  --bundle "$BUNDLE" --gpu "$GPU_UUID" --output "$OUTPUT_PNG"
+```
+
+The command checks the executable and all three components, checks free VRAM and compute processes immediately before load, and sends one built-in synthetic prompt at seed 43. It checks the fixed-size reply, waits for the child to exit successfully, and atomically writes a private 512×512 PNG. A per-account GPU lock stays with the child until it exits; this is not a reservation against unrelated work. Varying the prompt, connecting to Console, installation and editing are out of scope. This is the command for a first GPU test, not evidence that inference passes or that the candidate is fit for deployment.
 
 ## Gates before adding `deploy` support
 
