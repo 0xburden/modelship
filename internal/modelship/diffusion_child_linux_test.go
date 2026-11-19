@@ -56,9 +56,9 @@ func TestDiffusionExecFromVerifiedDescriptors(t *testing.T) {
 	cmd.ExtraFiles = []*os.File{verified, dir}
 	release := guardDiffusionChild(cmd)
 	defer release()
-	got, err := cmd.Output()
+	got, err := cmd.CombinedOutput()
 	if err != nil || string(got) != string(marker) {
-		t.Fatalf("descriptor launch failed: output=%q err=%v", got, err)
+		t.Fatalf("descriptor launch failed: combined stdout/stderr=%q err=%v", got, err)
 	}
 }
 
