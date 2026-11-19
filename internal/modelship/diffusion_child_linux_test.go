@@ -30,11 +30,13 @@ func TestDiffusionExecFromVerifiedDescriptors(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer dir.Close()
-	bin, err := os.ReadFile("/bin/cat")
+	// Use the test executable, not a host utility that may dispatch on
+	// argv[0] and reject descriptor paths (e.g. uutils cat).
+	bin, err := os.ReadFile("/proc/self/exe")
 	if err != nil {
 		t.Fatal(err)
 	}
-	pin := ArtifactPin{Name: "cat", Size: int64(len(bin)), SHA256: fmt.Sprintf("%x", sha256.Sum256(bin))}
+	pin := ArtifactPin{Name: "descriptor-fixture", Size: int64(len(bin)), SHA256: fmt.Sprintf("%x", sha256.Sum256(bin))}
 	if err := os.WriteFile(filepath.Join(root, pin.Name), bin, 0500); err != nil {
 		t.Fatal(err)
 	}
@@ -51,8 +53,8 @@ func TestDiffusionExecFromVerifiedDescriptors(t *testing.T) {
 	if err := os.Rename(bundle, filepath.Join(root, "renamed")); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.CommandContext(ctx, diffusionFD(3), diffusionFD(4)+"/fixture")
-	cmd.Env = diffusionEnv(root, "fixture", diffusionFD(4))
+	cmd := exec.CommandContext(ctx, diffusionFD(3), "-test.run=^TestDiffusionDescriptorFixture$")
+	cmd.Env = append(diffusionEnv(root, "fixture", diffusionFD(4)), "MODELSHIP_TEST_DIFFUSION_DESCRIPTOR=1")
 	cmd.ExtraFiles = []*os.File{verified, dir}
 	release := guardDiffusionChild(cmd)
 	defer release()
@@ -60,6 +62,21 @@ func TestDiffusionExecFromVerifiedDescriptors(t *testing.T) {
 	if err != nil || string(got) != string(marker) {
 		t.Fatalf("descriptor launch failed: combined stdout/stderr=%q err=%v", got, err)
 	}
+}
+
+func TestDiffusionDescriptorFixture(t *testing.T) {
+	if os.Getenv("MODELSHIP_TEST_DIFFUSION_DESCRIPTOR") != "1" {
+		return
+	}
+	payload, err := os.ReadFile(diffusionFD(4) + "/fixture")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	if _, err := os.Stdout.Write(payload); err != nil {
+		os.Exit(3)
+	}
+	os.Exit(0)
 }
 
 func TestDiffusionChildDeathFixture(t *testing.T) {
