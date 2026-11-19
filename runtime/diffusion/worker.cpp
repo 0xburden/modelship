@@ -130,10 +130,14 @@ int worker(const char *dir) {
             const Context ctx = load(dir);
             if (ctx) {
 #ifdef MODELSHIP_SD_EDIT
-                return serve_edit(stdin, protocol_out.get(), [&](uint32_t seed, std::string_view prompt,
-                                                                const unsigned char *reference, FILE *out) {
+                auto edit = [&](uint32_t seed, std::string_view prompt, const unsigned char *reference, FILE *out) {
                     return generate(ctx.get(), seed, prompt, out, reference);
-                });
+                };
+#ifdef MODELSHIP_SD_EDIT_SERVICE
+                return serve_edit_stream(stdin, protocol_out.get(), edit);
+#else
+                return serve_edit(stdin, protocol_out.get(), edit);
+#endif
 #else
                 return serve(stdin, protocol_out.get(), [&](uint32_t seed, std::string_view prompt, FILE *out) {
                     return generate(ctx.get(), seed, prompt, out);
@@ -154,7 +158,9 @@ int worker(const char *dir) {
 
 int main(int argc, char **argv) {
     if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {
-#ifdef MODELSHIP_SD_EDIT
+#if defined(MODELSHIP_SD_EDIT_SERVICE)
+        std::printf("modelship-sd-edit-worker protocol 3 stable-diffusion.cpp %s\n", sd_commit());
+#elif defined(MODELSHIP_SD_EDIT)
         std::printf("modelship-sd-edit-candidate protocol 2 stable-diffusion.cpp %s\n", sd_commit());
 #else
         std::printf("modelship-sd-worker protocol 1 stable-diffusion.cpp %s\n", sd_commit());
@@ -162,7 +168,9 @@ int main(int argc, char **argv) {
         return 0;
     }
 #ifdef MODELSHIP_SD_CUDA
-#ifdef MODELSHIP_SD_EDIT
+#if defined(MODELSHIP_SD_EDIT_SERVICE)
+    if (argc == 3 && std::strcmp(argv[1], "--private-edit-worker-stdio") == 0) return worker(argv[2]);
+#elif defined(MODELSHIP_SD_EDIT)
     if (argc == 3 && std::strcmp(argv[1], "--private-edit-stdio") == 0) return worker(argv[2]);
 #else
     if (argc == 3 && std::strcmp(argv[1], "--private-stdio") == 0) return worker(argv[2]);

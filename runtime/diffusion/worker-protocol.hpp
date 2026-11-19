@@ -127,4 +127,40 @@ int serve_edit(FILE *in, FILE *out, Edit edit) {
     }
     return 0;
 }
+
+// Resident edit-only worker. Keep the one-shot v2 EOF contract separate. Here
+// only frame boundaries may end cleanly; never scan for a new frame after a
+// bad length, truncated payload, or engine failure.
+constexpr unsigned char edit_service_protocol = 3;
+
+template <typename Edit>
+int serve_edit_stream(FILE *in, FILE *out, Edit edit) {
+    if (!write_frame(out, 'L', edit_service_protocol)) return 1;
+    std::array<unsigned char, reference_bytes> pixels;
+    std::array<char, max_prompt> text;
+    for (;;) {
+        unsigned char header[4];
+        const size_t got = std::fread(header, 1, sizeof(header), in);
+        if (got == 0 && std::feof(in) && !std::ferror(in)) return 0;
+        if (got != sizeof(header)) return 1;
+        unsigned char fields[6];
+        const uint32_t length = read_u32(header);
+        if (length < sizeof(fields) + 1 + reference_bytes ||
+            length > sizeof(fields) + max_prompt + reference_bytes ||
+            std::fread(fields, 1, sizeof(fields), in) != sizeof(fields)) return 1;
+        const uint32_t text_size = uint32_t(fields[4]) << 8 | uint32_t(fields[5]);
+        if (text_size == 0 || text_size > max_prompt || length != sizeof(fields) + text_size + reference_bytes ||
+            std::fread(text.data(), 1, text_size, in) != text_size ||
+            std::fread(pixels.data(), 1, pixels.size(), in) != pixels.size()) return 1;
+        const std::string_view prompt(text.data(), text_size);
+        if (!valid_prompt(prompt)) {
+            if (!write_frame(out, 'V')) return 1;
+            continue;
+        }
+        if (!edit(read_u32(fields), prompt, pixels.data(), out)) {
+            if (!std::ferror(out)) write_frame(out, 'F');
+            return 1;
+        }
+    }
+}
 } // namespace modelship::diffusion
