@@ -1,6 +1,6 @@
 # GGUF image deployment (experimental)
 
-**Alpha.17 candidate — do not publish or merge.** The public alpha.16 installer does not include this backend. This branch can package the already GPU-tested native Linux AMD64 generation and edit-only binaries for local testing. Public redistribution is blocked pending a third-party provenance and license review. It does not change existing llama.cpp or Diffusers workers. The private stdio worker never opens a port and the stock upstream HTTP server is not part of this build.
+**Alpha.17 candidate — do not publish or merge.** The public alpha.16 installer does not include this backend. The previous CUDA build passed separate generation and editing service tests. The replacement build removes the ported Philox RNG and the embedded tokenizer tables. Public redistribution remains blocked pending notice review and GPU validation of the replacement. It does not change existing llama.cpp or Diffusers workers. The private stdio worker never opens a port and the stock upstream HTTP server is not part of this build.
 
 ## Runtime probe
 
@@ -137,7 +137,7 @@ FLUX.1-schnell is a separate generation-only option if permissive licensing is t
 
 ## Release operator checklist
 
-1. Package the exact tested pairs, not freshly built substitutes, using Python 3.11+:
+1. **Stop until cleared:** the current Go pins and local archive tool still describe the historical binaries below, not the replacement. After auditing and validating the replacement on GPU, update the pins and package only the exact newly tested pairs using Python 3.11+:
    `python3 scripts/package-diffusion-runtime.py generation /path/to/generation-pair /path/to/output` and
    `python3 scripts/package-diffusion-runtime.py edit /path/to/edit-pair /path/to/output`.
 2. Compare archive hashes and byte lengths with `internal/modelship/diffusion_runtime_release.go`. Existing archives must never be replaced. After release approval, publish the staged runtime release **before** merging the CLI PR. Verify both public artifact URLs and full pinned hashes before merging, so the auto-deployed CLI never points to unpublished dependencies.
@@ -145,6 +145,10 @@ FLUX.1-schnell is a separate generation-only option if permissive licensing is t
 
 ### Runtime redistribution hold
 
-Do not upload the current binaries to a runtime release. The pinned source credits `src/core/rng_philox.hpp` as a port from [AUTOMATIC1111 `5ef669de`](https://github.com/AUTOMATIC1111/stable-diffusion-webui/blob/5ef669de080814067961f28357256e8fe27544f4/modules/rng_philox.py), an AGPLv3 project. Both workers contain the implementation and the pinned build selects it by default. The top-level MIT notices do not resolve the port's terms. The embedded tokenizer data and compiled CUDA Toolkit headers also need a complete provenance and notice inventory; the separately downloaded NVIDIA wheels do not cover code in the executable.
+Do not upload the historical binaries to a runtime release. The pinned source credits `src/core/rng_philox.hpp` as a port from [AUTOMATIC1111 `5ef669de`](https://github.com/AUTOMATIC1111/stable-diffusion-webui/blob/5ef669de080814067961f28357256e8fe27544f4/modules/rng_philox.py), an AGPLv3 project. Both historically tested workers contained that implementation. The top-level MIT notices do not resolve its terms.
 
-`releases/diffusion/THIRD_PARTY_NOTICES.txt` is a preliminary bundle for local QA, not clearance to redistribute. Resolve the obligations for the existing build or use a reviewed replacement build. A replacement changes the binary and may change seeded output: pin it separately and repeat A6000 generation, editing and lifecycle validation before shipping. No runtime release has been created. Alpha.16 remains public.
+The replacement candidate applies source-digest-checked CMake transforms. It removes that header from the disposable tree; the private worker explicitly selects `std_default` noise for the model and sampler. The build checks all ELF symbol tables for the removed implementation. This is host-side noise generation only; CUDA0 tensor residency and graph-dispatch guards are unchanged. Seeds are reproducible only within a validated runtime: the same seed will generally give different output from the historical binaries.
+
+`external-vocab.cmake` replaces the exact built-in vocabulary translation unit with code that reads `tokenizer.ggml.merges` from the existing full-file-verified Qwen3-VL encoder. No extra file or tensor download is required. A metadata-only range check on the pinned encoder confirmed all 151,387 merge lines match the prior embedded data in order, byte-for-byte with the final LF (1,671,839 bytes, SHA-256 `599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3`). The Qwen BPE implementation and special-token order are unchanged. Missing or invalid data fails startup; other embedded vocabularies are not compiled in and have no fallback. The ELF audit checks for all removed table symbols.
+
+The CUDA Toolkit's compiled-in headers and other linked code still need a complete notice/provenance inventory; separately downloaded NVIDIA wheels do not cover code in the executable. `releases/diffusion/THIRD_PARTY_NOTICES.txt` remains preliminary. The build workflow retains only hashes and audit evidence, not executable artifacts, while redistribution is on hold. After clearance, independently verify the exact replacement CUDA binaries on an authorized A6000 (generation, editing, readiness, repeat seed and restart/cache reuse), then repin the binaries and archives. No runtime release has been created. Alpha.16 remains public.

@@ -41,7 +41,10 @@ jobs:
           tail -n 1 evidence/elf-abi.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: unvalidated-sd-cuda-probe-${{ github.run_id }}
-          path: diffusion-out/
+          name: unvalidated-sd-cuda-build-evidence-${{ github.run_id }}
+          # Binary redistribution remains on hold. Keep build evidence without ELFs.
+          path: |
+            diffusion-out/SHA256SUMS
+            diffusion-out/evidence/
           if-no-files-found: error
           retention-days: 7

@@ -7,6 +7,7 @@
 
 #ifdef MODELSHIP_SD_CUDA
 #include "cuda-residency.hpp"
+#include "modelship_qwen_vocab.hpp"
 #include "ggml-cuda.h"
 #include <cuda_runtime_api.h>
 
@@ -43,12 +44,15 @@ Context load(const std::string &dir) {
     const std::string projector = dir + "/mmproj-Qwen3VL-8B-Instruct-F16.gguf";
     if (!local_component(projector, 1159029824)) return context;
 #endif
+    if (!modelship_load_qwen_vocab(encoder.c_str())) return context;
     const Options opt(sd_ctx_opt_create(), sd_opt_free);
     if (!opt || sd_opt_set_string(opt.get(), "diffusion_model_path", model.c_str()) != SD_STATUS_OK ||
         sd_opt_set_string(opt.get(), "llm_path", encoder.c_str()) != SD_STATUS_OK ||
         sd_opt_set_string(opt.get(), "vae_path", vae.c_str()) != SD_STATUS_OK ||
         sd_opt_set_string(opt.get(), "backend", "CUDA0") != SD_STATUS_OK ||
         sd_opt_set_string(opt.get(), "params_backend", "CUDA0") != SD_STATUS_OK ||
+        sd_opt_set_string(opt.get(), "rng_type", "std_default") != SD_STATUS_OK ||
+        sd_opt_set_string(opt.get(), "sampler_rng_type", "std_default") != SD_STATUS_OK ||
         sd_opt_set_bool(opt.get(), "auto_fit", false) != SD_STATUS_OK ||
         sd_opt_set_bool(opt.get(), "enable_mmap", false) != SD_STATUS_OK ||
         sd_opt_set_bool(opt.get(), "eager_load", true) != SD_STATUS_OK ||
