@@ -23,14 +23,12 @@ const diffusionStartupTimeout = 20 * time.Minute
 const diffusionRequestTimeout = 15 * time.Minute
 const diffusionStateHeadroom = int64(4 << 30)
 
-// Exact ELF pair from the build used for the approved GPU smoke. Until a
-// durable runtime distribution is reviewed/published, only an operator-supplied
-// copy of this pair is accepted; no dependency on expiring Actions artifact URLs.
+// Exact ELF pair from the build used for the integrated generation GPU test.
 var diffusionWorkerPin = ArtifactPin{Name: "modelship-sd-worker", Size: 115618872, SHA256: "5e1e684468576b74040a7c201eff289452511136f34477c9f9fbdcfafdbba1e1"}
 var diffusionProbePin = ArtifactPin{Name: "modelship-sd-probe", Size: 72735736, SHA256: "92ff72e75d53e502c0e5dffd1cf618201c28eb34a229b44775134d87b385c134"}
 
 // Protocol-3 pair from CUDA build 44470677936 at 44b403789a9185d5d8bd61bac101574828db862d.
-// The verified ABI and artifact checks do not substitute for a resident GPU test.
+// This exact pair passed the integrated edit GPU test.
 var diffusionEditWorkerPin = ArtifactPin{Name: "modelship-sd-edit-worker", Size: 115614808, SHA256: "519b0f987681f72da95d75df2d40e801cb23490b5a840d417510399fedabdaa2"}
 var diffusionEditProbePin = ArtifactPin{Name: "modelship-sd-probe", Size: 72731640, SHA256: "e5f7357f4e920d336d04215c71cd605e37459de62f23ae5735a5724701352c3e"}
 
@@ -413,8 +411,10 @@ func deployDiffusion(ctx context.Context, p Plan, source string, wait time.Durat
 	if err := validateNativeAccess(p, true); err != nil {
 		return err
 	}
-	if err := diffusionDir(source); err != nil {
-		return err
+	if source != "" {
+		if err := diffusionDir(source); err != nil {
+			return err
+		}
 	}
 	if err := diffusionHostABI(); err != nil {
 		return err
@@ -472,17 +472,25 @@ func deployDiffusion(ctx context.Context, p Plan, source string, wait time.Durat
 			return err
 		}
 	}
-	for _, pin := range pins {
-		if err := diffusionCopyBinary(ctx, source, dir, pin); err != nil {
+	client := artifactHTTPClient()
+	defer client.CloseIdleConnections()
+	if source == "" {
+		asset := diffusionArchivePin(p.Task)
+		fmt.Printf("Downloading verified CUDA runtime %s (%d bytes).\n", asset.Name, asset.Size)
+		if err := fetchDiffusionRuntime(ctx, client, dir, asset, pins); err != nil {
 			return err
+		}
+	} else {
+		for _, pin := range pins {
+			if err := diffusionCopyBinary(ctx, source, dir, pin); err != nil {
+				return err
+			}
 		}
 	}
 	inputs, libs := filepath.Join(dir, "cuda-inputs"), filepath.Join(dir, "cuda")
 	if err := os.Mkdir(libs, 0700); err != nil {
 		return err
 	}
-	client := artifactHTTPClient()
-	defer client.CloseIdleConnections()
 	for _, wheel := range diffusionWheels() {
 		if err := downloadVerified(ctx, client, wheel.URL, "", filepath.Join(inputs, wheel.Name), wheel.ArtifactPin); err != nil {
 			return err

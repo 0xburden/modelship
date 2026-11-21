@@ -1,6 +1,6 @@
-# GGUF diffusion runtime investigation
+# GGUF image deployment (experimental)
 
-**Draft candidate only.** The published installer does not include this backend. This branch adds build-from-source native generation and edit-only candidates with locally supplied, exact runtime pairs. It does not change existing llama.cpp or Diffusers workers. The probe cannot load a model, open a port, or generate an image. The private stdio worker never opens a port. The stock upstream HTTP server is not part of this build.
+**Alpha.17 candidate — do not publish or merge.** The public alpha.16 installer does not include this backend. This branch can package the already GPU-tested native Linux AMD64 generation and edit-only binaries for local testing. Public redistribution is blocked pending a third-party provenance and license review. It does not change existing llama.cpp or Diffusers workers. The private stdio worker never opens a port and the stock upstream HTTP server is not part of this build.
 
 ## Runtime probe
 
@@ -82,9 +82,11 @@ The worker uses seed 43, 40 Euler steps and text CFG 6. Weight-free tests cover 
 
 The executable from [CUDA build 44464799948](https://github.com/0xburden/modelship/actions/runs/44464799948), commit `410fd61fa7462852096cadbc514251d96a4052bd`, passed this one-shot on Ubuntu 22.04 AMD64 with an RTX A6000 (49,140 MiB initially free, driver 610.43.02). Its SHA-256 was `f49c38425b6c694b1ad700b8d6a5a2725409b73211c6bcc54b20f46d6f1f5769`. With the four exact pinned files and private CUDA libraries, the 512×512 edit took **27.95 seconds after context load**. Visual inspection confirmed that the mug turned blue while the yellow lemon and composition were retained. The PNG SHA-256 was `6f0db22a45175eb226bfd26265589028c4e0451555d8a10a87efe397ce1b941a`. Whole-device VRAM usage reached **12,372 MiB across 304 samples at 250 ms** during load and editing, and returned to zero after exit and test-stage cleanup. This is not a true peak or a minimum fit measurement; the 40 GiB admission gate is unchanged. No service was started, and the test does not cover other reference images, repeated edits, or switching modes.
 
-## Draft native deployment (generation only)
+## Native deployment (generation only)
 
-Use the CLI built from this branch, not the published installer. The only accepted runtime is the reviewed Linux AMD64 `modelship-sd-worker` and `modelship-sd-probe` pair from the build cited above. Keep them in a canonical, user-owned directory (`0700`, files `0500`, no links; protected ancestors). The CLI verifies exact size and digest; it does not fetch an expiring Actions artifact or accept substitute runtimes. Durable runtime distribution is still pending.
+Use the alpha.17 CLI once released. `--diffusion` selects this exact profile (flags only, not the guided wizard). After confirmation, deployment fetches the generation or edit archive from the versioned `runtime-sd-532d2c1-u2204-r1` GitHub release. The CLI checks archive size and SHA-256, checks each executable against the original GPU-tested size and SHA-256, and installs only those two executables and their third-party notices. No CI artifact lookup, mirrors, model weights, NVIDIA shared libraries or host libraries are included in the archive.
+
+For an offline runtime source, use `--diffusion-runtime-dir DIR` instead of the archive download. It must contain the exact reviewed worker/probe pair in a canonical, user-owned directory (`0700`, files `0500`, no links; protected ancestors). This option skips only the runtime archive download, not any missing CUDA wheels or model files. There is no fallback from a failed download or rejected local pair.
 
 With a private bearer key file, preview on the target machine:
 
@@ -92,11 +94,11 @@ With a private bearer key file, preview on the target machine:
 modelship plan leejet/Qwen-Image-2.1-GGUF \
   --revision 0bca76da6edd8a18211e9717454615c1bbaaf6ed \
   --backend native --task text-to-image --name qwen-gguf-image --port 8001 \
-  --diffusion-runtime-dir "$RUNTIME_DIR" --api-key-file "$KEY_FILE" \
+  --diffusion --api-key-file "$KEY_FILE" \
   --experimental --research
 ```
 
-`plan` does not fetch dependencies or weights. On a separately authorized, dedicated host, `deploy` with the same options asks for confirmation. It copies the pinned runtime and downloads and verifies two pinned NVIDIA wheels into private deployment state. It extracts only their three reviewed CUDA libraries, probes CUDA0 before fetching weights, and uses a separate verified model cache. It never installs drivers, changes global CUDA or Python packages, or edits an existing worker. Requires Linux AMD64, a compatible glibc/libstdc++ userspace, driver 570.26+, compute capability 8.0+, and an idle GPU with 40 GiB free and no graphics or compute processes, with no risk override. The idle check is a snapshot and the lock coordinates only Modelship diffusion processes under the same account. Start rechecks local files, CUDA and fresh GPU admission without re-downloading. Use `status`, `logs`, `start`, `stop` or `uninstall` with `--backend native --name qwen-gguf-image`.
+`plan` does not fetch dependencies or weights. On a separately authorized, dedicated host, `deploy` with the same options asks for confirmation. It installs the pinned runtime and downloads and verifies two pinned NVIDIA wheels into private deployment state. It extracts only their three reviewed CUDA libraries, probes CUDA0 before fetching weights, and uses a separate verified model cache. It never installs drivers, changes global CUDA or Python packages, or edits an existing worker. Requires Linux AMD64, a compatible glibc/libstdc++ userspace, driver 570.26+, compute capability 8.0+, and an idle GPU with 40 GiB free and no graphics or compute processes, with no risk override. The idle check is a snapshot and the lock coordinates only Modelship diffusion processes under the same account. Start rechecks local files, CUDA and fresh GPU admission without re-downloading. Use `status`, `logs`, `start`, `stop` or `uninstall` with `--backend native --name qwen-gguf-image`.
 
 The default listener is loopback, and bearer auth is required even there. Use a trusted TLS ingress or SSH tunnel for remote traffic. Authenticated `GET /health` becomes ready only after a fixed startup generation synchronizes, unlike the child's earlier context-loaded signal. `GET /v1/models` and `GET /v1/capabilities` describe the fixed profile. `POST /v1/images/generations` takes a literal `prompt` (up to 1,024 UTF-8 bytes) and optional unsigned 32-bit `seed`. Values for `width`, `height`, `steps`, and `guidance_scale`, when supplied, must match `512`, `512`, `40`, and `6` respectively. Returns the seed and base64 PNG. Unsupported options are rejected; editing returns 409. Only one request runs at a time. Disconnecting does not release the slot early. Protocol failure or timeout causes the private child to be terminated and reaped without retry. A Linux parent-death signal and an inherited deployment lock prevent cleanup while an orphaned child still holds the lock.
 
@@ -106,11 +108,11 @@ The draft CLI at `615e4edc8e10ebb05d2e11c510c587234c9e3465` passed a generation 
 
 Two distinct prompts returned valid 512×512 PNGs in **24.29 s** and **25.25 s**. The images visibly matched the requested subjects: a red sailboat in watercolor and a yellow lemon on a blue plate. After `stop` and `start`, the supervisor PID and run ID changed, the three cached model files were unchanged, and readiness returned in **106.04 s**. Repeating the first request at seed 43 returned a byte-identical PNG in **24.19 s** on this host. Whole-device VRAM reached **10,280 MiB in 331 samples** taken at roughly 250 ms intervals during the API and restart checks, not including the first deployment. The GPU returned to 0 MiB used after uninstall. These are scoped observations, not a minimum fit claim or a cross-host determinism guarantee. Live disconnect and forced-failure paths have weight-free tests only.
 
-## Draft edit-only deployment (resident protocol v3)
+## Edit-only deployment (resident protocol v3)
 
 The one-shot protocol v2 executable is **not** the service binary. The separate resident `modelship-sd-edit-worker` accepts multiple sequential frames with the same layout, without waiting for EOF after each frame. The supervisor requires a v3 handshake and a completed, synchronized edit of the synthetic red-mug fixture in that same child before reporting ready. It never treats an edit as generation or restarts a failed request.
 
-Select `--task image-to-image` explicitly with the same repository, immutable revision, bearer key and separate consent flags as above. Use a new deployment name, an available port, and the exact edit worker/probe pair from [CUDA build 44470677936](https://github.com/0xburden/modelship/actions/runs/44470677936) in `--diffusion-runtime-dir`. The generation profile still requires its original pair. The edit plan uses a separate private cache for all four artifacts, including the F16 projector. The default `auto` task still selects generation. The 40 GiB free and idle GPU admission gate is unchanged.
+Select `--task image-to-image` explicitly with the same repository, immutable revision, bearer key and separate consent flags as above. Use a new deployment name and an available port. The edit profile fetches its own archive with the exact edit worker/probe pair from [CUDA build 44470677936](https://github.com/0xburden/modelship/actions/runs/44470677936); the generation profile still uses its original pair. The edit plan uses a separate private cache for all four artifacts, including the F16 projector. The default `auto` task still selects generation. The 40 GiB free and idle GPU admission gate is unchanged.
 
 | Edit runtime executable | Bytes | SHA-256 |
 | --- | ---: | --- |
@@ -132,3 +134,17 @@ Two successive 512×512 edits took **27.12 s** each, using a synthetic red mug a
 3. **Keep promotion and additional capabilities separate.** Durable runtime distribution has not been published. The fixed-size results do not establish peak memory, larger-size fit, or output equivalence to Diffusers. Combined generation/editing and LoRA remain unimplemented for this backend.
 
 FLUX.1-schnell is a separate generation-only option if permissive licensing is the priority. It would require its own verified diffusion/encoder/VAE bundle and tests; it is not an edit fallback or a substitute for Qwen.
+
+## Release operator checklist
+
+1. Package the exact tested pairs, not freshly built substitutes, using Python 3.11+:
+   `python3 scripts/package-diffusion-runtime.py generation /path/to/generation-pair /path/to/output` and
+   `python3 scripts/package-diffusion-runtime.py edit /path/to/edit-pair /path/to/output`.
+2. Compare archive hashes and byte lengths with `internal/modelship/diffusion_runtime_release.go`. Existing archives must never be replaced. After release approval, publish the staged runtime release **before** merging the CLI PR. Verify both public artifact URLs and full pinned hashes before merging, so the auto-deployed CLI never points to unpublished dependencies.
+3. After the CLI site deploys, verify all retained/current assets and the uncached latest installer. Do not deploy a user model as part of the installer smoke.
+
+### Runtime redistribution hold
+
+Do not upload the current binaries to a runtime release. The pinned source credits `src/core/rng_philox.hpp` as a port from [AUTOMATIC1111 `5ef669de`](https://github.com/AUTOMATIC1111/stable-diffusion-webui/blob/5ef669de080814067961f28357256e8fe27544f4/modules/rng_philox.py), an AGPLv3 project. Both workers contain the implementation and the pinned build selects it by default. The top-level MIT notices do not resolve the port's terms. The embedded tokenizer data and compiled CUDA Toolkit headers also need a complete provenance and notice inventory; the separately downloaded NVIDIA wheels do not cover code in the executable.
+
+`releases/diffusion/THIRD_PARTY_NOTICES.txt` is a preliminary bundle for local QA, not clearance to redistribute. Resolve the obligations for the existing build or use a reviewed replacement build. A replacement changes the binary and may change seeded output: pin it separately and repeat A6000 generation, editing and lifecycle validation before shipping. No runtime release has been created. Alpha.16 remains public.

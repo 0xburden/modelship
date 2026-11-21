@@ -414,3 +414,7 @@ run-identity mismatch, exclusive CUDA-drain handling, stopped-worker
 configuration and rollback, and retry after interrupted bundle staging. This
 does not establish output quality, loading
 compatibility with a real GPU, full-pipeline latency or peak VRAM.
+
+## GGUF image generation and editing (alpha.17 candidate)
+
+The exact GPU-tested generation and resident edit executables are packaged separately, with their original paired CUDA probes. The [runtime notes](runtime/diffusion/README.md) record Ubuntu 22.04/A6000 warm-up, authenticated repeated generation and editing, restart and cache reuse, plus the limits of sampled memory measurements. Those GPU tests used the verified local executable pairs. Packaging validation covers the new archive download, verification and installation path without a GPU or model download; it is not another GPU run or evidence of combined mode, LoRA, or a lower memory threshold.

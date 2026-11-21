@@ -278,7 +278,7 @@ func probeTorch(ctx context.Context, python string, p Plan) (TorchInfo, error) {
 }
 func DeployNative(ctx context.Context, p Plan, wait time.Duration) error {
 	if p.Diffusion != "" || p.Runtime == diffusionRuntime {
-		return fmt.Errorf("deploy GGUF diffusion with the explicit --diffusion-runtime-dir option")
+		return deployDiffusion(ctx, p, "", wait)
 	}
 	if err := validateDualImageExecution(p); err != nil {
 		return err

@@ -1,4 +1,6 @@
-> **Alpha.16 candidate:** add or remove the reviewed SeedraAI Polaroid [image LoRA](IMAGE_LORA.md) on a stopped native Qwen Image 2.1 deployment. Generation and edits accept optional per-request `lora_strength`; omission uses the base model.
+> **Alpha.17 candidate:** [native GGUF image generation and edit-only deployments](runtime/diffusion/README.md) for one exact Qwen Image 2.1 bundle. Both separate tasks were tested at 512×512 on an A6000; the 40 GiB idle-GPU admission gate is unchanged. Not published: public runtime redistribution is under review. No combined mode or GGUF LoRA.
+
+> **v0.3.0-alpha.16:** add or remove the reviewed SeedraAI Polaroid [image LoRA](IMAGE_LORA.md) on a stopped native Qwen Image 2.1 deployment. Generation and edits accept optional per-request `lora_strength`; omission uses the base model.
 
 > **v0.3.0-alpha.15:** new native installations of the reviewed Qwen Image 2.1 pin use a [seam-reducing tiled VAE decoder](IMAGE_GENERATE_EDIT.md#qwen-image-21-output-seams) for both generation and edits. Same-latent decoder A/B measurements on an A6000 show smaller color discontinuities without a material change in decoder memory. This is not a full pipeline benchmark; existing workers are unchanged.
 

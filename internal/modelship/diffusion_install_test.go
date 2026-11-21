@@ -59,8 +59,9 @@ func TestDiffusionPlanningIsolation(t *testing.T) {
 	if err != nil || len(blocked.Blockers) != 4 || !blocked.WeightsFitFree || validateDiffusionPlan(blocked) == nil {
 		t.Fatalf("consents, auth and experimental admission are not separate: %+v %v", blocked.Blockers, err)
 	}
-	if err := DeployNative(context.Background(), p, 0); err == nil || !strings.Contains(err.Error(), "--diffusion-runtime-dir") {
-		t.Fatal("unexpected fallback when source is absent")
+	p.Research = false
+	if err := DeployNative(context.Background(), p, 0); err == nil || !strings.Contains(err.Error(), "invalid reviewed GGUF diffusion deployment") {
+		t.Fatal("automatic runtime source must not bypass native plan validation")
 	}
 }
 

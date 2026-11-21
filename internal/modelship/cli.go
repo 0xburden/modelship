@@ -48,7 +48,8 @@ Plan/deploy options:
   --research         Acknowledge non-commercial research/evaluation use (Qwen Image)
   --trust-model-code Explicit approval of the pinned, hash-verified MOSS Python code
   --gguf-file FILE  Explicit reviewed GGUF text variant; no automatic conversion
-  --diffusion-runtime-dir DIR  Draft native GGUF image generation or edit with pinned local runtime pair
+  --diffusion       Reviewed native GGUF image generation or editing (flags only)
+  --diffusion-runtime-dir DIR  Use an exact local GGUF diffusion runtime pair instead of downloading
   --vision          Opt in to reviewed image understanding (native Gemma/Qwen or GGUF)
   --mmproj-file FILE  Explicit reviewed projector (required for GGUF vision only)
   --weights-repo ID  Explicit official WAN Diffusers conversion; never inferred
@@ -185,6 +186,7 @@ func planCommand(ctx context.Context, action string, args []string) error {
 	fs.BoolVar(&o.Vision, "vision", false, "enable reviewed native image understanding (GGUF additionally requires --mmproj-file)")
 	fs.StringVar(&o.MMProjFile, "mmproj-file", "", "explicit reviewed GGUF vision projector filename")
 	fs.StringVar(&o.GGUFFile, "gguf-file", "", "explicit approved standalone GGUF filename (native experimental only)")
+	fs.BoolVar(&o.Diffusion, "diffusion", false, "use the reviewed native GGUF diffusion profile")
 	diffusionRuntimeDir := fs.String("diffusion-runtime-dir", "", "experimental GGUF diffusion: private directory with the exact reviewed worker and probe")
 	fs.StringVar(&o.Listen, "listen", "", "native IPv4 listener (default 127.0.0.1); 0.0.0.0 requires --api-key-file")
 	fs.StringVar(&o.APIKeyFile, "api-key-file", "", "private bearer key file; never a literal key value")
@@ -237,14 +239,19 @@ func planCommand(ctx context.Context, action string, args []string) error {
 		return err
 	}
 	requestedID := id
-	fs.Visit(func(f *flag.Flag) { o.Diffusion = o.Diffusion || f.Name == "diffusion-runtime-dir" })
+	localDiffusion := false
+	fs.Visit(func(f *flag.Flag) { localDiffusion = localDiffusion || f.Name == "diffusion-runtime-dir" })
+	o.Diffusion = o.Diffusion || localDiffusion
 	if o.Diffusion {
 		incompatible := *weightsRepo != ""
 		fs.Visit(func(f *flag.Flag) {
 			incompatible = incompatible || f.Name == "context" || f.Name == "python"
 		})
-		if incompatible || !filepath.IsAbs(*diffusionRuntimeDir) || filepath.Clean(*diffusionRuntimeDir) != *diffusionRuntimeDir {
-			return fmt.Errorf("GGUF diffusion requires an absolute runtime directory and does not use --weights-repo, --context or --python")
+		if incompatible {
+			return fmt.Errorf("GGUF diffusion does not use --weights-repo, --context or --python")
+		}
+		if localDiffusion && (!filepath.IsAbs(*diffusionRuntimeDir) || filepath.Clean(*diffusionRuntimeDir) != *diffusionRuntimeDir) {
+			return fmt.Errorf("--diffusion-runtime-dir must be an absolute canonical path")
 		}
 	}
 	id, err = resolveWeightRepo(requestedID, *weightsRepo)
@@ -295,6 +302,14 @@ func planCommand(ctx context.Context, action string, args []string) error {
 	if requestedID != id {
 		p.RequestedModel = requestedID
 	}
+	if o.Diffusion {
+		if localDiffusion {
+			p.Warnings = append(p.Warnings, "Runtime source: exact verified local executable pair (no runtime archive download).")
+		} else {
+			asset := diffusionArchivePin(p.Task)
+			p.Warnings = append(p.Warnings, fmt.Sprintf("Runtime archive after confirmation: %s (%d bytes, SHA-256 %s).", asset.URL, asset.Size, asset.SHA256))
+		}
+	}
 	if *asJSON {
 		if err = printJSON(p); err != nil {
 			return err
@@ -321,7 +336,7 @@ func planCommand(ctx context.Context, action string, args []string) error {
 			return fmt.Errorf("deployment cancelled")
 		}
 	}
-	if o.Diffusion {
+	if localDiffusion {
 		return deployDiffusion(ctx, p, *diffusionRuntimeDir, *wait)
 	}
 	return Deploy(ctx, p, *wait)
