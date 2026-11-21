@@ -6,6 +6,7 @@ Does not run pip, access Hugging Face, load models, or require a GPU.
 import json
 import os
 from pathlib import Path
+import shlex
 import socket
 import subprocess
 import sys
@@ -64,7 +65,10 @@ class NativeCLIIntegrationTests(unittest.TestCase):
         self.dir.chmod(0o700)
         python = self.dir / "venv/bin/python"
         python.parent.mkdir(parents=True)
-        python.symlink_to(sys.executable)
+        # A symlink outside sys.prefix loses pyvenv.cfg when the test suite
+        # runs inside a virtualenv. Exec the original interpreter path instead.
+        python.write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} "$@"\n')
+        python.chmod(0o700)
         (self.dir / "native_entry.py").write_text(FAKE_WORKER)
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))

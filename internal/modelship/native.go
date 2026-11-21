@@ -123,11 +123,22 @@ func nativeConfig(name string) (NativeConfig, string, error) {
 	if err = readJSONFile(filepath.Join(dir, "config.json"), &cfg); err != nil {
 		return cfg, dir, fmt.Errorf("read native deployment %s: %w", name, err)
 	}
-	if cfg.Schema < 1 || cfg.Schema > loraSchemaVersion || cfg.Plan.Backend != "native" || cfg.Plan.Name != name || !commitPattern.MatchString(cfg.Plan.Revision) || cfg.Plan.Port < 1024 || cfg.Plan.Port > 65535 {
+	if cfg.Schema < 1 || cfg.Schema > diffusionSchemaVersion || cfg.Plan.Backend != "native" || cfg.Plan.Name != name || !commitPattern.MatchString(cfg.Plan.Revision) || cfg.Plan.Port < 1024 || cfg.Plan.Port > 65535 {
 		return cfg, dir, fmt.Errorf("invalid native deployment metadata")
 	}
 	if err := validateLoRAConfig(cfg); err != nil {
 		return cfg, dir, err
+	}
+	if cfg.Schema == diffusionSchemaVersion || cfg.Plan.Diffusion != "" || cfg.Plan.Runtime == diffusionRuntime || cfg.Plan.NativeLoader == diffusionRuntime {
+		if cfg.Schema != diffusionSchemaVersion || cfg.LoRA != nil {
+			return cfg, dir, fmt.Errorf("GGUF diffusion requires native schema 12 without a LoRA adapter")
+		}
+		if err := validateDiffusionPlan(cfg.Plan); err != nil {
+			return cfg, dir, err
+		}
+		if err := diffusionDir(dir); err != nil {
+			return cfg, dir, err
+		}
 	}
 	if cfg.Schema < dualImageSchemaVersion && cfg.Plan.Task == dualImageTask {
 		return cfg, dir, fmt.Errorf("dual image routes require native schema 10")
@@ -266,6 +277,9 @@ func probeTorch(ctx context.Context, python string, p Plan) (TorchInfo, error) {
 	return info, nil
 }
 func DeployNative(ctx context.Context, p Plan, wait time.Duration) error {
+	if p.Diffusion != "" || p.Runtime == diffusionRuntime {
+		return deployDiffusion(ctx, p, "", wait)
+	}
 	if err := validateDualImageExecution(p); err != nil {
 		return err
 	}
@@ -419,6 +433,11 @@ func startNative(ctx context.Context, cfg NativeConfig, dir string, wait time.Du
 	if err == nil && nativeAlive(dir, old) {
 		return fmt.Errorf("native deployment already running (PID %d)", old.PID)
 	}
+	if cfg.Plan.Diffusion != "" {
+		if err := admitDiffusionGPU(ctx, cfg.Plan); err != nil {
+			return err
+		}
+	}
 	if err := verifyWeightFitNow(ctx, loraWeightPlan(cfg)); err != nil {
 		return err
 	}
@@ -490,6 +509,12 @@ func NativeExec(ctx context.Context, name, runID string) error {
 	}
 	if cfg.Plan.GGUF != nil {
 		return runGGUFWorker(ctx, cfg, dir, runID)
+	}
+	if cfg.Plan.Diffusion != "" {
+		if err := waitDiffusionIdentity(ctx, dir, runID); err != nil {
+			return err
+		}
+		return runDiffusionNative(ctx, cfg, dir, runID)
 	}
 	python := filepath.Join(dir, "venv", "bin", "python")
 	root := dir
@@ -601,13 +626,16 @@ func waitNative(ctx context.Context, cfg NativeConfig, dir string, run NativeRun
 				RunID        string   `json:"run_id"`
 				ImageTasks   []string `json:"image_tasks"`
 				LoRARevision string   `json:"lora_revision"`
+				Runtime      string   `json:"runtime"`
+				Task         string   `json:"task"`
 			}
 			decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 65536)).Decode(&health)
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 				return fmt.Errorf("native readiness authentication rejected; worker retained; check key and restart after rotation")
 			}
-			if resp.StatusCode == 200 && decodeErr == nil && health.Ready && health.Model == cfg.Plan.Model && health.Revision == cfg.Plan.Revision && health.RunID == run.RunID && imageHealthMatches(cfg.Plan.Task, health.ImageTasks) && loraHealthMatches(cfg.LoRA, health.LoRARevision) {
+			if resp.StatusCode == 200 && decodeErr == nil && health.Ready && health.Model == cfg.Plan.Model && health.Revision == cfg.Plan.Revision && health.RunID == run.RunID && imageHealthMatches(cfg.Plan.Task, health.ImageTasks) && loraHealthMatches(cfg.LoRA, health.LoRARevision) &&
+				(cfg.Plan.Diffusion == "" || health.Runtime == diffusionRuntime && health.Task == cfg.Plan.Task) {
 				return nil
 			}
 		}
@@ -676,7 +704,11 @@ func ManageNative(ctx context.Context, action, name string) error {
 		if state == "running" {
 			ready, healthError = nativeHealth(ctx, cfg, run)
 		}
-		return printJSON(map[string]any{"backend": "native", "name": name, "state": state, "pid": pid, "model": cfg.Plan.Model, "revision": cfg.Plan.Revision, "endpoint": fmt.Sprintf("http://127.0.0.1:%d", cfg.Plan.Port), "listen": nativeListen(cfg.Plan), "auth_enabled": cfg.Plan.APIKeyFile != "", "ready": ready, "health_error": healthError, "log": filepath.Join(dir, "service.log"), "torch": cfg.Torch, "runtime": cfg.Plan.Runtime, "gguf": cfg.Plan.GGUF, "vision": cfg.Plan.Vision, "text_features": cfg.Plan.TextFeatures, "lora": cfg.LoRA})
+		status := map[string]any{"backend": "native", "name": name, "state": state, "pid": pid, "model": cfg.Plan.Model, "revision": cfg.Plan.Revision, "endpoint": fmt.Sprintf("http://127.0.0.1:%d", cfg.Plan.Port), "listen": nativeListen(cfg.Plan), "auth_enabled": cfg.Plan.APIKeyFile != "", "ready": ready, "health_error": healthError, "log": filepath.Join(dir, "service.log"), "torch": cfg.Torch, "runtime": cfg.Plan.Runtime, "gguf": cfg.Plan.GGUF, "vision": cfg.Plan.Vision, "text_features": cfg.Plan.TextFeatures, "lora": cfg.LoRA}
+		if cfg.Plan.Diffusion != "" {
+			status["diffusion_profile"] = cfg.Plan.Diffusion
+		}
+		return printJSON(status)
 	}
 	if action == "logs" {
 		cmd := exec.CommandContext(ctx, "tail", "-n", "200", "-f", filepath.Join(dir, "service.log"))
@@ -696,13 +728,23 @@ func ManageNative(ctx context.Context, action, name string) error {
 	switch action {
 	case "start":
 		return startNative(ctx, cfg, dir, 30*time.Minute)
-	case "stop":
-		return stopNative(ctx, dir)
-	case "uninstall":
+	case "stop", "uninstall":
 		if err = stopNative(ctx, dir); err != nil {
 			return err
 		}
-		return os.RemoveAll(dir)
+		if cfg.Plan.Diffusion != "" {
+			// The recorded supervisor might already be dead. Its child holds
+			// this deployment-specific lock until kernel process teardown.
+			child, err := lockDiffusionFile(dir, ".diffusion-child.lock")
+			if err != nil {
+				return fmt.Errorf("cannot confirm the private diffusion child has exited; deployment state retained")
+			}
+			defer child.Close()
+		}
+		if action == "uninstall" {
+			return os.RemoveAll(dir)
+		}
+		return nil
 	default:
 		return fmt.Errorf("unknown native lifecycle action")
 	}

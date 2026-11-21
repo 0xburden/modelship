@@ -1,0 +1,50 @@
+name: GGUF diffusion CUDA build probe
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/gguf-diffusion-runtime]
+    paths: ['runtime/diffusion/**', '!runtime/diffusion/**/*.md', '.github/workflows/diffusion-runtime.yml']
+permissions:
+  contents: read
+concurrency:
+  group: diffusion-probe-${{ github.ref }}
+  # Preserve a running full CUDA build when a follow-up is pushed.
+  cancel-in-progress: false
+jobs:
+  build-probe:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Test offline bundle verification and GPU admission
+        run: python3 -m unittest discover -s runtime/diffusion -p 'test_candidate_*.py'
+      - name: Free disk on this disposable GitHub-hosted runner
+        run: |
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          docker image prune --all --force
+          df -h /
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - name: Test placement and private protocol, compile CUDA, and check ELF ABI (no GPU)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: runtime/diffusion/Dockerfile
+          target: candidate
+          outputs: type=local,dest=diffusion-out
+          provenance: false
+      - name: Verify candidate checksums and record ABI evidence
+        run: |
+          cd diffusion-out
+          sha256sum -c SHA256SUMS
+          cat SHA256SUMS evidence/*.dynamic.txt
+          tail -n 1 evidence/elf-abi.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: unvalidated-sd-cuda-build-evidence-${{ github.run_id }}
+          # Binary redistribution remains on hold. Keep build evidence without ELFs.
+          path: |
+            diffusion-out/SHA256SUMS
+            diffusion-out/evidence/
+          if-no-files-found: error
+          retention-days: 7
