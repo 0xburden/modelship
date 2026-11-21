@@ -7,6 +7,12 @@ function(modelship_rng_patch relative original patched)
     if(sha STREQUAL patched)
         return()
     endif()
+    # The Dockerfile configures a CPU test build and then CUDA from the same
+    # tree. Accept the exact final output of qwen-only.cmake for this TU.
+    if(relative STREQUAL "src/pipeline/diffusion_engine.cpp" AND
+       sha STREQUAL "e863aa1b5a3a20a635555836ccb4457e4e870125fb8f80b8bf9cec5e155055e8")
+        return()
+    endif()
     if(NOT sha STREQUAL original)
         message(FATAL_ERROR "Unexpected source for standard RNG: ${relative}")
     endif()

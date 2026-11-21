@@ -6,7 +6,7 @@ WORKDIR /src
 ADD --checksum=sha256:0278dc8e6e180adc4b43b3ace515eeef870dd76533a34fa1edcfa071ce7d7812 https://codeload.github.com/leejet/stable-diffusion.cpp/tar.gz/532d2c15c430a785a712b2d94281f04e733008a4 /src/sd.tar.gz
 ADD --checksum=sha256:8bd7adc7eb1366d31670467951d21eb1a5f55e8f6d89b9b91909ffb0246ac5d2 https://codeload.github.com/leejet/ggml/tar.gz/eeda9ec48fc84a3df0bb9dcc19ae9053075a2539 /src/ggml.tar.gz
 ADD --checksum=sha256:630615d8e98ac33eba7fbe472626dff5c899c85af3c024585ae109166a6909d0 https://github.com/Kitware/CMake/releases/download/v3.31.8/cmake-3.31.8-linux-x86_64.tar.gz /src/cmake.tar.gz
-COPY runtime/diffusion/CMakeLists.txt runtime/diffusion/cuda-placement.cmake runtime/diffusion/cuda-residency.cmake runtime/diffusion/cuda-residency.hpp runtime/diffusion/external-vocab.cmake runtime/diffusion/qwen-vocab.cpp runtime/diffusion/qwen-vocab.hpp runtime/diffusion/qwen-vocab-test.cpp runtime/diffusion/literal-prompt.cmake runtime/diffusion/literal-prompt-test.cpp runtime/diffusion/standard-rng.cmake runtime/diffusion/standard-rng-test.cpp runtime/diffusion/placement-test.cpp runtime/diffusion/probe.cpp runtime/diffusion/worker.cpp runtime/diffusion/worker-protocol.hpp runtime/diffusion/worker-protocol-test.cpp /src/probe/
+COPY runtime/diffusion/CMakeLists.txt runtime/diffusion/cuda-placement.cmake runtime/diffusion/cuda-residency.cmake runtime/diffusion/cuda-residency.hpp runtime/diffusion/external-vocab.cmake runtime/diffusion/qwen-vocab.cpp runtime/diffusion/qwen-vocab.hpp runtime/diffusion/qwen-vocab-test.cpp runtime/diffusion/qwen-only.cmake runtime/diffusion/literal-prompt.cmake runtime/diffusion/literal-prompt-test.cpp runtime/diffusion/standard-rng.cmake runtime/diffusion/standard-rng-test.cpp runtime/diffusion/placement-test.cpp runtime/diffusion/probe.cpp runtime/diffusion/worker.cpp runtime/diffusion/worker-protocol.hpp runtime/diffusion/worker-protocol-test.cpp /src/probe/
 COPY runtime/llama/audit.sh /src/audit.sh
 COPY runtime/diffusion/cuda-build-evidence.sh /src/cuda-build-evidence.sh
 RUN --network=none mkdir -p /src/sd/ggml /src/cmake && \
@@ -48,7 +48,7 @@ RUN --network=none mkdir -p /out/bin /out/evidence && \
     for name in modelship-sd-probe modelship-sd-worker modelship-sd-edit-candidate modelship-sd-edit-worker; do \
         nm -C "/out/bin/$name" > "/tmp/$name.symbols" && \
         grep -q ' [tT] main$' "/tmp/$name.symbols" && \
-        ! grep -Ei 'PhiloxRNG|philox4_round|rng_philox|merges_utf8_c_str|vocab_json_utf8_c_str|t5_tokenizer_json_str|nvtx(GetExportTable|Globals|Attach|Domain|Mark|Range|Name|Initialize)|nvtx3::' "/tmp/$name.symbols" && \
+        ! grep -Ei 'PhiloxRNG|philox4_round|rng_philox|merges_utf8_c_str|vocab_json_utf8_c_str|t5_tokenizer_json_str|nvtx(GetExportTable|Globals|Attach|Domain|Mark|Range|Name|Initialize)|nvtx3::|FrozenCLIPEmbedderWithCustomWords|PhotoMakerExtension|ControlNetBlock::|ControlNet::' "/tmp/$name.symbols" && \
         readelf -d "/out/bin/$name" > "/out/evidence/$name.dynamic.txt" && \
         grep -q 'libcudart.so.12' "/out/evidence/$name.dynamic.txt" && \
         ! grep -Eq 'RPATH|RUNPATH' "/out/evidence/$name.dynamic.txt" || exit 1; \
