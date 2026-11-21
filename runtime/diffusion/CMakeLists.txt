@@ -20,6 +20,10 @@ include(cuda-placement.cmake)
 include(cuda-residency.cmake)
 include(standard-rng.cmake)
 include(external-vocab.cmake)
+include(literal-prompt.cmake)
+if(SD_CUDA)
+    add_compile_definitions(CCCL_DISABLE_NVTX)
+endif()
 add_subdirectory("${SD_SOURCE}" sd EXCLUDE_FROM_ALL)
 
 add_executable(modelship-placement-test EXCLUDE_FROM_ALL placement-test.cpp)
@@ -37,6 +41,12 @@ set_target_properties(modelship-qwen-vocab-test PROPERTIES RUNTIME_OUTPUT_DIRECT
 target_include_directories(modelship-qwen-vocab-test PRIVATE "${SD_SOURCE}/src/tokenizers/vocab")
 target_link_libraries(modelship-qwen-vocab-test PRIVATE ggml)
 target_compile_features(modelship-qwen-vocab-test PRIVATE cxx_std_17)
+
+add_executable(modelship-literal-prompt-test EXCLUDE_FROM_ALL literal-prompt-test.cpp)
+set_target_properties(modelship-literal-prompt-test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+target_include_directories(modelship-literal-prompt-test PRIVATE "${SD_SOURCE}/src")
+target_link_libraries(modelship-literal-prompt-test PRIVATE stable-diffusion)
+target_compile_features(modelship-literal-prompt-test PRIVATE cxx_std_17)
 
 add_executable(modelship-sd-probe probe.cpp)
 set_target_properties(modelship-sd-probe PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
