@@ -9,6 +9,8 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
+
 	"sort"
 	"strings"
 	"syscall"
@@ -45,7 +47,9 @@ Plan/deploy options:
   --experimental     Explicitly opt in to an experimental implemented recipe
   --research         Acknowledge non-commercial research/evaluation use (Qwen Image)
   --trust-model-code Explicit approval of the pinned, hash-verified MOSS Python code
-  --gguf-file FILE  Explicit reviewed GGUF variant; no automatic conversion
+  --gguf-file FILE  Explicit reviewed GGUF text variant; no automatic conversion
+  --diffusion       Reviewed native GGUF image generation or editing (flags only)
+  --diffusion-runtime-dir DIR  Use an exact local GGUF diffusion runtime pair instead of downloading
   --vision          Opt in to reviewed image understanding (native Gemma/Qwen or GGUF)
   --mmproj-file FILE  Explicit reviewed projector (required for GGUF vision only)
   --weights-repo ID  Explicit official WAN Diffusers conversion; never inferred
@@ -182,6 +186,8 @@ func planCommand(ctx context.Context, action string, args []string) error {
 	fs.BoolVar(&o.Vision, "vision", false, "enable reviewed native image understanding (GGUF additionally requires --mmproj-file)")
 	fs.StringVar(&o.MMProjFile, "mmproj-file", "", "explicit reviewed GGUF vision projector filename")
 	fs.StringVar(&o.GGUFFile, "gguf-file", "", "explicit approved standalone GGUF filename (native experimental only)")
+	fs.BoolVar(&o.Diffusion, "diffusion", false, "use the reviewed native GGUF diffusion profile")
+	diffusionRuntimeDir := fs.String("diffusion-runtime-dir", "", "experimental GGUF diffusion: private directory with the exact reviewed worker and probe")
 	fs.StringVar(&o.Listen, "listen", "", "native IPv4 listener (default 127.0.0.1); 0.0.0.0 requires --api-key-file")
 	fs.StringVar(&o.APIKeyFile, "api-key-file", "", "private bearer key file; never a literal key value")
 	fs.StringVar(&o.Python, "python", "python3", "native base Python with working CUDA PyTorch")
@@ -233,6 +239,21 @@ func planCommand(ctx context.Context, action string, args []string) error {
 		return err
 	}
 	requestedID := id
+	localDiffusion := false
+	fs.Visit(func(f *flag.Flag) { localDiffusion = localDiffusion || f.Name == "diffusion-runtime-dir" })
+	o.Diffusion = o.Diffusion || localDiffusion
+	if o.Diffusion {
+		incompatible := *weightsRepo != ""
+		fs.Visit(func(f *flag.Flag) {
+			incompatible = incompatible || f.Name == "context" || f.Name == "python"
+		})
+		if incompatible {
+			return fmt.Errorf("GGUF diffusion does not use --weights-repo, --context or --python")
+		}
+		if localDiffusion && (!filepath.IsAbs(*diffusionRuntimeDir) || filepath.Clean(*diffusionRuntimeDir) != *diffusionRuntimeDir) {
+			return fmt.Errorf("--diffusion-runtime-dir must be an absolute canonical path")
+		}
+	}
 	id, err = resolveWeightRepo(requestedID, *weightsRepo)
 	if err != nil {
 		return err
@@ -243,29 +264,36 @@ func planCommand(ctx context.Context, action string, args []string) error {
 	if err != nil {
 		return err
 	}
-	model, err := inspectForPlan(ctx, id, o.Revision)
-	if err != nil {
-		return err
-	}
-	if o.GGUFFile != "" {
-		hub := NewHub()
-		hub.Token = os.Getenv("HF_TOKEN")
-		if err = hub.inspectGGUF(ctx, &model, o.GGUFFile); err != nil {
+	var model Model
+	if o.Diffusion {
+		// Exact, previously inspected artifact pins; no remote metadata lookup
+		// or model downloads during preview.
+		model.Hub.ID, model.Hub.SHA = id, o.Revision
+	} else {
+		model, err = inspectForPlan(ctx, id, o.Revision)
+		if err != nil {
 			return err
 		}
-	}
-	if (ggufOnly(model) || o.GGUFFile != "" || model.GGUF != nil) && (o.Vision || o.MMProjFile != "") {
-		if !o.Vision || o.MMProjFile == "" {
-			return fmt.Errorf("use --vision and --mmproj-file together")
+		if o.GGUFFile != "" {
+			hub := NewHub()
+			hub.Token = os.Getenv("HF_TOKEN")
+			if err = hub.inspectGGUF(ctx, &model, o.GGUFFile); err != nil {
+				return err
+			}
 		}
-		hub := NewHub()
-		hub.Token = os.Getenv("HF_TOKEN")
-		if err = hub.inspectGGUFProjector(ctx, &model, o.MMProjFile); err != nil {
-			return err
+		if (ggufOnly(model) || o.GGUFFile != "" || model.GGUF != nil) && (o.Vision || o.MMProjFile != "") {
+			if !o.Vision || o.MMProjFile == "" {
+				return fmt.Errorf("use --vision and --mmproj-file together")
+			}
+			hub := NewHub()
+			hub.Token = os.Getenv("HF_TOKEN")
+			if err = hub.inspectGGUFProjector(ctx, &model, o.MMProjFile); err != nil {
+				return err
+			}
 		}
-	}
-	if o.Backend == "native" {
-		InspectModelCache(&host, model)
+		if o.Backend == "native" {
+			InspectModelCache(&host, model)
+		}
 	}
 	p, err := BuildPlan(model, host, o)
 	if err != nil {
@@ -273,6 +301,14 @@ func planCommand(ctx context.Context, action string, args []string) error {
 	}
 	if requestedID != id {
 		p.RequestedModel = requestedID
+	}
+	if o.Diffusion {
+		if localDiffusion {
+			p.Warnings = append(p.Warnings, "Runtime source: exact verified local executable pair (no runtime archive download).")
+		} else {
+			asset := diffusionArchivePin(p.Task)
+			p.Warnings = append(p.Warnings, fmt.Sprintf("Runtime archive after confirmation: %s (%d bytes, SHA-256 %s).", asset.URL, asset.Size, asset.SHA256))
+		}
 	}
 	if *asJSON {
 		if err = printJSON(p); err != nil {
@@ -300,6 +336,9 @@ func planCommand(ctx context.Context, action string, args []string) error {
 			return fmt.Errorf("deployment cancelled")
 		}
 	}
+	if localDiffusion {
+		return deployDiffusion(ctx, p, *diffusionRuntimeDir, *wait)
+	}
 	return Deploy(ctx, p, *wait)
 }
 func printJSON(v any) error {
@@ -312,8 +351,12 @@ func writePlan(w io.Writer, p Plan) {
 	if p.RequestedModel != "" {
 		fmt.Fprintf(w, "Requested:   %s\nExplicit weights repository follows:\n", p.RequestedModel)
 	}
-	fmt.Fprintf(w, "Model:       %s\nRevision:    %s\nTask:        %s\nRuntime:     %s (%s)\nGPU:         %d · %s · %d MiB free\nWeights:     %d files · %.2f GiB (plus supporting files)\nEst. VRAM:   %d MiB\nEndpoint:    http://127.0.0.1:%d\nDeployment:  %s\n",
-		p.Model, p.Revision, p.Task, p.Runtime, p.Image, p.GPU.Index, p.GPU.Name, p.GPU.FreeMiB, len(p.Files), float64(p.WeightBytes)/(1024*1024*1024), p.EstimatedVRAMMiB, p.Port, p.Name)
+	vram := fmt.Sprintf("%d MiB", p.EstimatedVRAMMiB)
+	if p.Diffusion != "" {
+		vram = "not estimated; fixed 40 GiB experimental admission gate"
+	}
+	fmt.Fprintf(w, "Model:       %s\nRevision:    %s\nTask:        %s\nRuntime:     %s (%s)\nGPU:         %d · %s · %d MiB free\nWeights:     %d files · %.2f GiB (plus supporting files)\nEst. VRAM:   %s\nEndpoint:    http://127.0.0.1:%d\nDeployment:  %s\n",
+		p.Model, p.Revision, p.Task, p.Runtime, p.Image, p.GPU.Index, p.GPU.Name, p.GPU.FreeMiB, len(p.Files), float64(p.WeightBytes)/(1024*1024*1024), vram, p.Port, p.Name)
 	fmt.Fprintf(w, "Weight VRAM: %.2f GiB (%s); fits total=%t, fits free=%t\n", float64(p.WeightResidentBytes)/(1024*1024*1024), p.WeightMemoryBasis, p.WeightsFitTotal, p.WeightsFitFree)
 	if p.ModelCacheDir != "" {
 		fmt.Fprintf(w, "Model cache: %s\n", p.ModelCacheDir)
@@ -329,6 +372,17 @@ func writePlan(w io.Writer, p Plan) {
 			fmt.Fprintf(w, "Projector:   %s (%d bytes); SHA-256 %s; %.3f GiB encoded tensor budget\n", v.File.Name, v.File.Size, v.File.SHA256, float64(v.Metadata.TensorBytes)/(1<<30))
 		}
 		fmt.Fprintf(w, "GGUF file:   %s (%d bytes); SHA-256 %s\nRuntime pin: %s; CUDA0/all GPU layers; auto-fit disabled; %s\n", p.GGUF.File.Name, p.GGUF.File.Size, p.GGUF.File.SHA256, p.GGUF.Runtime, mode)
+	}
+	if p.Diffusion != "" {
+		fmt.Fprintf(w, "Diffusion:   %s; CUDA0 only, no CPU weight offload; experimental admission 40 GiB free plus idle GPU\n", p.Diffusion)
+		for _, file := range diffusionArtifacts(p.Task) {
+			fmt.Fprintf(w, "  %s @ %s / %s (%d bytes); SHA-256 %s\n", file.Repo, file.Revision, file.RemotePath, file.Size, file.SHA256)
+		}
+		if pins, err := diffusionRuntimePins(p.Task); err == nil {
+			for _, file := range pins {
+				fmt.Fprintf(w, "  Local executable %s (%d bytes); SHA-256 %s\n", file.Name, file.Size, file.SHA256)
+			}
+		}
 	}
 	if p.TextFeatures != nil {
 		fmt.Fprintf(w, "Text controls: %s; chat SSE/thinking opt-in, off by default; <=%d total output tokens including reasoning\n", p.TextFeatures.ID, p.TextFeatures.MaxOutputTokens)

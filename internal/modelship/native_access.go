@@ -219,6 +219,13 @@ func ConfigureNative(ctx context.Context, name string, listen, key *string) erro
 	} else if !os.IsNotExist(e) {
 		return fmt.Errorf("cannot verify stopped worker identity; access settings unchanged")
 	}
+	if cfg.Plan.Diffusion != "" {
+		child, err := lockDiffusionFile(dir, ".diffusion-child.lock")
+		if err != nil {
+			return fmt.Errorf("cannot confirm the private diffusion child has exited; access settings unchanged")
+		}
+		defer child.Close()
+	}
 	if listen != nil {
 		cfg.Plan.Listen = *listen
 	}
@@ -237,7 +244,10 @@ func ConfigureNative(ctx context.Context, name string, listen, key *string) erro
 	// Auth module first, entrypoint second, metadata last. A partial failure leaves
 	// legacy configs loopback-only. Existing inference modules and venv stay intact.
 	accessAssets := []string{"api_auth.py", "native_entry.py"}
-	if cfg.Plan.GGUF != nil {
+	if cfg.Plan.Diffusion != "" && cfg.Plan.APIKeyFile == "" {
+		return fmt.Errorf("GGUF diffusion requires bearer authentication even on loopback")
+	}
+	if cfg.Plan.GGUF != nil || cfg.Plan.Diffusion != "" {
 		accessAssets = nil
 	}
 	for _, name := range accessAssets {
@@ -296,6 +306,8 @@ func nativeHealth(ctx context.Context, cfg NativeConfig, run NativeRun) (bool, s
 		Model        string   `json:"model"`
 		Revision     string   `json:"revision"`
 		RunID        string   `json:"run_id"`
+		Runtime      string   `json:"runtime"`
+		Task         string   `json:"task"`
 		ImageTasks   []string `json:"image_tasks"`
 		LoRARevision string   `json:"lora_revision"`
 	}
@@ -304,6 +316,9 @@ func nativeHealth(ctx context.Context, cfg NativeConfig, run NativeRun) (bool, s
 	}
 	if !health.Ready || health.Model != cfg.Plan.Model || health.Revision != cfg.Plan.Revision || health.RunID != run.RunID || (!imageHealthMatches(cfg.Plan.Task, health.ImageTasks) || !loraHealthMatches(cfg.LoRA, health.LoRARevision)) {
 		return false, "worker identity/readiness mismatch"
+	}
+	if cfg.Plan.Diffusion != "" && (health.Runtime != diffusionRuntime || health.Task != cfg.Plan.Task) {
+		return false, "diffusion runtime/task mismatch"
 	}
 	return true, ""
 }
