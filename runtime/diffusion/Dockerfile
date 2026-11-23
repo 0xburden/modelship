@@ -13,16 +13,17 @@ RUN --network=none mkdir -p /src/sd/ggml /src/cmake && \
     tar -xzf sd.tar.gz --strip-components=1 -C sd && \
     tar -xzf ggml.tar.gz --strip-components=1 -C sd/ggml && \
     tar -xzf cmake.tar.gz --strip-components=1 -C cmake
-# The same patched ggml sources are tested without a CUDA backend or driver.
-# This only builds the test and ggml, not stable-diffusion or any model.
+# Test the same patched sources without a CUDA backend or driver.
+# The literal-prompt test links the CPU-only library and loads no model.
 RUN --network=none /src/cmake/bin/cmake -S /src/probe -B /src/cpu-test \
     -DSD_SOURCE=/src/sd -DGIT_EXE:FILEPATH= -DSDCPP_BUILD_VERSION=0.0.0 \
     -DSDCPP_BUILD_COMMIT=532d2c15c430a785a712b2d94281f04e733008a4 \
     -DCMAKE_BUILD_TYPE=Release -DFETCHCONTENT_FULLY_DISCONNECTED=ON \
     -DSD_CUDA=OFF -DSD_BUILD_EXAMPLES=OFF -DSD_WEBP=OFF -DSD_WEBM=OFF \
     -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_BUILD_TESTS=OFF -DGGML_BUILD_EXAMPLES=OFF && \
-    /src/cmake/bin/cmake --build /src/cpu-test --target modelship-placement-test modelship-standard-rng-test modelship-qwen-vocab-test modelship-sd-protocol-test --parallel 2 && \
-    /src/cpu-test/bin/modelship-placement-test && /src/cpu-test/bin/modelship-standard-rng-test && /src/cpu-test/bin/modelship-qwen-vocab-test && /src/cpu-test/bin/modelship-sd-protocol-test && rm -rf /src/cpu-test
+    /src/cmake/bin/cmake --build /src/cpu-test --target modelship-placement-test modelship-standard-rng-test modelship-qwen-vocab-test modelship-sd-protocol-test modelship-literal-prompt-test --parallel 2 && \
+    /src/cpu-test/bin/modelship-placement-test && /src/cpu-test/bin/modelship-standard-rng-test && /src/cpu-test/bin/modelship-qwen-vocab-test && /src/cpu-test/bin/modelship-sd-protocol-test && \
+    /src/cpu-test/bin/modelship-literal-prompt-test && rm -rf /src/cpu-test
 # The builder provides CUDA headers/libs. Do not fetch GGML, CCCL, CUTLASS or UI dependencies.
 # Build one Ampere real target and compute80 PTX. No other accelerator or dynamic backend plugins.
 RUN --network=none /src/cmake/bin/cmake -S /src/probe -B /src/build \
@@ -37,8 +38,7 @@ RUN --network=none /src/cmake/bin/cmake -S /src/probe -B /src/build \
     -DGGML_CPU_ALL_VARIANTS=OFF -DGGML_OPENMP=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF \
     -DGGML_BMI2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF -DGGML_SSE42=ON \
     -DGGML_BUILD_TESTS=OFF -DGGML_BUILD_EXAMPLES=OFF && \
-    /src/cmake/bin/cmake --build /src/build --target modelship-literal-prompt-test modelship-sd-probe modelship-sd-worker modelship-sd-edit-candidate modelship-sd-edit-worker --parallel 2 && \
-    /src/build/bin/modelship-literal-prompt-test
+    /src/cmake/bin/cmake --build /src/build --target modelship-sd-probe modelship-sd-worker modelship-sd-edit-candidate modelship-sd-edit-worker --parallel 2
 RUN --network=none mkdir -p /out/bin /out/evidence && \
     cp /src/build/bin/modelship-sd-probe /src/build/bin/modelship-sd-worker /src/build/bin/modelship-sd-edit-candidate /src/build/bin/modelship-sd-edit-worker /out/bin/ && \
     test ! -e /src/sd/src/core/rng_philox.hpp && \
