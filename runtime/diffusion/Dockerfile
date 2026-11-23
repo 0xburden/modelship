@@ -8,7 +8,7 @@ ADD --checksum=sha256:8bd7adc7eb1366d31670467951d21eb1a5f55e8f6d89b9b91909ffb024
 ADD --checksum=sha256:630615d8e98ac33eba7fbe472626dff5c899c85af3c024585ae109166a6909d0 https://github.com/Kitware/CMake/releases/download/v3.31.8/cmake-3.31.8-linux-x86_64.tar.gz /src/cmake.tar.gz
 COPY runtime/diffusion/CMakeLists.txt runtime/diffusion/cuda-placement.cmake runtime/diffusion/cuda-residency.cmake runtime/diffusion/cuda-residency.hpp runtime/diffusion/external-vocab.cmake runtime/diffusion/qwen-vocab.cpp runtime/diffusion/qwen-vocab.hpp runtime/diffusion/qwen-vocab-test.cpp runtime/diffusion/qwen-only.cmake runtime/diffusion/literal-prompt.cmake runtime/diffusion/literal-prompt-test.cpp runtime/diffusion/standard-rng.cmake runtime/diffusion/standard-rng-test.cpp runtime/diffusion/placement-test.cpp runtime/diffusion/probe.cpp runtime/diffusion/worker.cpp runtime/diffusion/worker-protocol.hpp runtime/diffusion/worker-protocol-test.cpp /src/probe/
 COPY runtime/llama/audit.sh /src/audit.sh
-COPY runtime/diffusion/cuda-build-evidence.sh /src/cuda-build-evidence.sh
+COPY runtime/diffusion/cuda-build-evidence.sh runtime/diffusion/check-cuda-compile.cmake /src/
 RUN --network=none mkdir -p /src/sd/ggml /src/cmake && \
     tar -xzf sd.tar.gz --strip-components=1 -C sd && \
     tar -xzf ggml.tar.gz --strip-components=1 -C sd/ggml && \
@@ -31,27 +31,34 @@ RUN --network=none /src/cmake/bin/cmake -S /src/probe -B /src/build \
     -DSDCPP_BUILD_COMMIT=532d2c15c430a785a712b2d94281f04e733008a4 \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=/usr/bin/gcc -DCMAKE_CXX_COMPILER=/usr/bin/g++ \
     -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/g++ -DCMAKE_CUDA_ARCHITECTURES=80 \
-    -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DFETCHCONTENT_FULLY_DISCONNECTED=ON \
+    -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DFETCHCONTENT_FULLY_DISCONNECTED=ON \
     -DSD_CUDA=ON -DSD_CUDA_CUTLASS_PATH:PATH= -DSD_BUILD_EXAMPLES=OFF \
     -DSD_WEBP=OFF -DSD_WEBM=OFF -DSD_METAL=OFF -DSD_RPC=OFF \
     -DGGML_CUDA_NCCL=OFF -DGGML_CUDA_GRAPHS=OFF -DGGML_BACKEND_DL=OFF -DGGML_NATIVE=OFF \
     -DGGML_CPU_ALL_VARIANTS=OFF -DGGML_OPENMP=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF \
     -DGGML_BMI2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF -DGGML_SSE42=ON \
-    -DGGML_BUILD_TESTS=OFF -DGGML_BUILD_EXAMPLES=OFF && \
-    /src/cmake/bin/cmake --build /src/build --target modelship-sd-probe modelship-sd-worker modelship-sd-edit-candidate modelship-sd-edit-worker --parallel 2
-RUN --network=none mkdir -p /out/bin /out/evidence && \
+    -DGGML_BUILD_TESTS=OFF -DGGML_BUILD_EXAMPLES=OFF
+# Fail before the long build if compiler flags or Toolkit evidence are missing.
+RUN --network=none mkdir -p /out/evidence && \
+    sh /src/cuda-build-evidence.sh /src/build /out/evidence && \
+    cp /src/build/CMakeCache.txt /out/evidence/
+RUN --network=none /src/cmake/bin/cmake --build /src/build \
+    --target modelship-sd-probe modelship-sd-worker modelship-sd-edit-candidate modelship-sd-edit-worker --parallel 2
+RUN --network=none mkdir -p /out/bin && \
     cp /src/build/bin/modelship-sd-probe /src/build/bin/modelship-sd-worker /src/build/bin/modelship-sd-edit-candidate /src/build/bin/modelship-sd-edit-worker /out/bin/ && \
     test ! -e /src/sd/src/core/rng_philox.hpp && \
-    sh /src/cuda-build-evidence.sh /src/build /out/evidence && \
-    cp /src/build/CMakeCache.txt /out/evidence/ && \
     sh /src/audit.sh /out/bin /out/evidence/elf-abi.txt /usr/local/cuda/targets/x86_64-linux/lib 1 && \
     for name in modelship-sd-probe modelship-sd-worker modelship-sd-edit-candidate modelship-sd-edit-worker; do \
         nm -C "/out/bin/$name" > "/tmp/$name.symbols" && \
-        grep -q ' [tT] main$' "/tmp/$name.symbols" && \
-        ! grep -Ei 'PhiloxRNG|philox4_round|rng_philox|merges_utf8_c_str|vocab_json_utf8_c_str|t5_tokenizer_json_str|nvtx(GetExportTable|Globals|Attach|Domain|Mark|Range|Name|Initialize)|nvtx3::|FrozenCLIPEmbedderWithCustomWords|PhotoMakerExtension|ControlNetBlock::|ControlNet::' "/tmp/$name.symbols" && \
-        readelf -d "/out/bin/$name" > "/out/evidence/$name.dynamic.txt" && \
-        grep -q 'libcudart.so.12' "/out/evidence/$name.dynamic.txt" && \
-        ! grep -Eq 'RPATH|RUNPATH' "/out/evidence/$name.dynamic.txt" || exit 1; \
+        grep -q ' [tT] main$' "/tmp/$name.symbols" || { echo "Missing main symbol in $name" >&2; exit 1; }; \
+        if grep -Ei 'PhiloxRNG|philox4_round|rng_philox|merges_utf8_c_str|vocab_json_utf8_c_str|t5_tokenizer_json_str|nvtx(GetExportTable|Globals|Attach|Domain|Mark|Range|Name|Initialize)|nvtx3::|FrozenCLIPEmbedderWithCustomWords|PhotoMakerExtension|ControlNetBlock::|ControlNet::' "/tmp/$name.symbols"; then \
+            echo "Excluded implementation found in $name" >&2; exit 1; \
+        fi; \
+        readelf -d "/out/bin/$name" > "/out/evidence/$name.dynamic.txt" || exit 1; \
+        grep -q 'libcudart.so.12' "/out/evidence/$name.dynamic.txt" || { echo "Missing CUDA runtime dependency in $name" >&2; exit 1; }; \
+        if grep -E 'RPATH|RUNPATH' "/out/evidence/$name.dynamic.txt"; then \
+            echo "Unexpected runtime search path in $name" >&2; exit 1; \
+        fi; \
     done && \
     cd /out && sha256sum bin/modelship-sd-probe bin/modelship-sd-worker bin/modelship-sd-edit-candidate bin/modelship-sd-edit-worker > SHA256SUMS
 FROM scratch AS candidate
